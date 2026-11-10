@@ -259,7 +259,7 @@ public final class MultiOutputDevice {
     /// 明确结束时恢复原输出；用户点选普通设备时使用其明确选择，而非猜测另一台设备。
     public func stop(selecting outputUID: String? = nil) throws {
         guard let route else { return }
-        var aggregateReleased = false
+        var aggregateAbsenceConfirmed = false
         do {
             let snapshot = try hardware.snapshot()
             var target: AudioOutput?
@@ -274,16 +274,25 @@ public final class MultiOutputDevice {
                 try hardware.select(selectedTarget.id)
             }
             try hardware.destroy(route.deviceID)
-            aggregateReleased = true
+            // destroy 返回成功不等于 HAL 已移除设备；必须从新的枚举结果确认 UID 消失。
+            let afterDestroy = try hardware.snapshot()
+            aggregateAbsenceConfirmed = !afterDestroy.outputs.contains { $0.uid == route.uid }
+            guard aggregateAbsenceConfirmed else {
+                throw AudioFailure("系统未确认释放同时输出设备，请重试释放")
+            }
             // 某些 macOS 版本会在销毁聚合设备后重新把默认输出切回蓝牙设备；释放完成后再确认一次目标。
             self.route = nil
             requiresCleanup = false
             if let target {
                 try hardware.select(target.id)
+                let verified = try hardware.snapshot()
+                guard verified.selectedID == target.id else {
+                    throw AudioFailure("系统未确认切换回所选输出，请重新选择设备")
+                }
             }
         } catch {
             // 聚合设备已经释放后发生的目标切换失败不能再被误报成“仍需释放聚合设备”。
-            requiresCleanup = !aggregateReleased
+            requiresCleanup = !aggregateAbsenceConfirmed
             throw error
         }
     }

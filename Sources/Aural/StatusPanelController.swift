@@ -119,6 +119,8 @@ final class StatusPanelController: NSObject {
         presentationGeneration &+= 1
         installDismissMonitors(generation: presentationGeneration)
         model.setMeteringVisible(true, for: .popover)
+        // 面板重新出现时补一次完整状态；隐藏期间只监听路由，避免后台反复扫描进程。
+        Task { @MainActor [weak self] in self?.model.refresh() }
     }
 
     private func hidePopup() {

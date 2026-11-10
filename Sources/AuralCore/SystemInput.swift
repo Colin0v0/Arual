@@ -14,7 +14,7 @@ public struct AudioInput: AudioDeviceDescriptor, Equatable, Codable, Sendable {
     }
 }
 
-public struct SystemInputSnapshot: Codable {
+public struct SystemInputSnapshot: Codable, Equatable {
     public let inputs: [AudioInput]
     /// nil 表示系统没有默认输入，不擅自选用列表中的第一台设备。
     public let selectedID: AudioDeviceID?

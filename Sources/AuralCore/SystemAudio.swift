@@ -140,7 +140,7 @@ public struct AudioOutput: AudioDeviceDescriptor, Equatable, Codable, Sendable {
     }
 }
 
-public struct SystemAudioSnapshot: Codable {
+public struct SystemAudioSnapshot: Codable, Equatable {
     public let outputs: [AudioOutput]
     public let selectedID: AudioDeviceID
     public let controls: [AudioDeviceID: AudioDeviceControlState]

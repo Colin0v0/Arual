@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CoreAudio
 import SwiftUI
 import Testing
@@ -7,6 +8,18 @@ import Testing
 
 @MainActor
 struct OutputRoutingErrorTests {
+    @Test func unchangedRefreshDoesNotRepublishModelState() {
+        let fixture = RoutingHardwareFixture()
+        let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
+        var updates = 0
+        let cancellable = model.objectWillChange.sink { updates += 1 }
+
+        // 定时轮询读到相同快照时不能触发隐藏面板重新布局。
+        model.refresh()
+        #expect(updates == 0)
+        withExtendedLifetime(cancellable) {}
+    }
+
     @Test func startupRecognizesPreviousDeviceWithoutRestoringOrChangingOutput() {
         let fixture = RoutingHardwareFixture()
         fixture.unmanaged = [Self.previousDevice]
@@ -155,6 +168,22 @@ struct OutputRoutingErrorTests {
         #expect(!model.applicationAudioUnavailable)
     }
 
+    @Test func shrinkingRouteKeepsCleanupEntryWhenAggregateRemovalIsUnconfirmed() {
+        let fixture = RoutingHardwareFixture()
+        let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
+        #expect(model.startSimultaneousOutput(fixture.outputs.map(\.uid)))
+        fixture.keepAggregateAfterDestroy = true
+
+        #expect(!model.updateSimultaneousOutput([fixture.outputs[1].uid]))
+        #expect(model.multiOutputRoute?.deviceID == 99)
+        #expect(model.multiOutputError != nil)
+
+        fixture.keepAggregateAfterDestroy = false
+        model.stopSimultaneousOutput()
+        #expect(model.multiOutputRoute == nil)
+        #expect(model.multiOutputError == nil)
+    }
+
     private static let previousDevice = AudioOutput(id: 88, uid: "local.aural.multi.previous-session",
                                                     name: "Aural 同时输出", transport: kAudioDeviceTransportTypeAggregate)
 
@@ -300,6 +329,7 @@ private final class RoutingHardwareFixture {
     var destroyAttempts = 0
     var failCreation = false
     var failDestroy = false
+    var keepAggregateAfterDestroy = false
 
     var snapshot: SystemAudioSnapshot {
         var current = outputs + unmanaged.filter { !destroyed.contains($0.id) }
@@ -326,6 +356,7 @@ private final class RoutingHardwareFixture {
                 self.destroyAttempts += 1
                 if self.failDestroy { throw AudioFailure("释放同时输出失败") }
                 self.destroyed.append(id)
+                if self.keepAggregateAfterDestroy { return }
                 if id == 99 { self.composition = nil }
             })
     }

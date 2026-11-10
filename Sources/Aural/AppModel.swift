@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import SwiftUI
 import AuralCore
 
@@ -36,6 +37,17 @@ final class AppModel: ObservableObject {
     private var metersVisible: Bool { !visibleMeterSurfaces.isDisjoint(with: selectedMeterSections) }
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
+    private var outputRouteListener: AudioObjectPropertyListenerBlock?
+    private var mediaOutputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    private var systemOutputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
     private var isShutdown = false
 
     /// 正式应用在主线程显式取得 HAL，避免默认参数在非隔离上下文读取主线程状态。
@@ -50,8 +62,9 @@ final class AppModel: ObservableObject {
         multiOutput = MultiOutputDevice(hardware: outputHardware)
         refresh()
         guard monitorsSystem else { return }
+        installOutputRouteListener()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.refreshForPeriodicTimer() }
         }
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification,
                                                                           object: nil, queue: .main) { [weak self] _ in
@@ -71,22 +84,62 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 蓝牙重连可能瞬间改写默认输出。监听 HAL 通知后立即纠正，不能只等两秒轮询。
+    private func installOutputRouteListener() {
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.refreshForPeriodicTimer() }
+        }
+        outputRouteListener = listener
+        _ = AudioObjectAddPropertyListenerBlock(HAL.system, &mediaOutputAddress, DispatchQueue.main, listener)
+        _ = AudioObjectAddPropertyListenerBlock(HAL.system, &systemOutputAddress, DispatchQueue.main, listener)
+    }
+
+    private func removeOutputRouteListener() {
+        guard let outputRouteListener else { return }
+        _ = AudioObjectRemovePropertyListenerBlock(HAL.system, &mediaOutputAddress,
+                                                   DispatchQueue.main, outputRouteListener)
+        _ = AudioObjectRemovePropertyListenerBlock(HAL.system, &systemOutputAddress,
+                                                   DispatchQueue.main, outputRouteListener)
+        self.outputRouteListener = nil
+    }
+
     func refresh() {
         guard !isShutdown else { return }
         refreshAudio()
         guard monitorsSystem else { return }
+        refreshApplicationState()
+    }
+
+    /// 隐藏且没有用户管理的音频会话时，周期任务只刷新输出路由；
+    /// 进程归属和输入设备枚举留给面板打开或用户主动操作，避免空闲时反复做完整扫描。
+    private func refreshForPeriodicTimer() {
+        guard !isShutdown else { return }
+        refreshAudio()
+        guard monitorsSystem, shouldRefreshApplicationStateDuringPolling else { return }
+        refreshApplicationState()
+    }
+
+    private var shouldRefreshApplicationStateDuringPolling: Bool {
+        !visibleMeterSurfaces.isEmpty
+            || !sessions.isEmpty
+            || mixStates.values.contains { $0.managed }
+    }
+
+    private func refreshApplicationState() {
         refreshInputs()
         do {
             let records = try AudioProcesses.records()
-            registeredProcessCount = records.count
+            if registeredProcessCount != records.count { registeredProcessCount = records.count }
             let retained = Set(mixStates.keys.filter { mixStates[$0]?.managed == true || sessions[$0] != nil })
-            applications = RunningApplications.rows(records: records, retainedIDs: retained)
-            processError = nil
+            let nextApplications = RunningApplications.rows(records: records, retainedIDs: retained)
+            if applications != nextApplications { applications = nextApplications }
+            if processError != nil { processError = nil }
         } catch {
             // 普通 App 身份仍是系统真实数据，但不能把失败的 HAL 枚举当作“没有音频流”。
-            applications = RunningApplications.rows(records: [])
-            registeredProcessCount = 0
-            processError = error.localizedDescription
+            let emptyApplications = RunningApplications.rows(records: [])
+            if applications != emptyApplications { applications = emptyApplications }
+            if registeredProcessCount != 0 { registeredProcessCount = 0 }
+            if processError != error.localizedDescription { processError = error.localizedDescription }
             pauseManagedApplications("音频进程读取失败：\(error.localizedDescription)")
         }
         for app in applications where mixStates[app.id] == nil { mixStates[app.id] = ApplicationMixState() }
@@ -107,24 +160,26 @@ final class AppModel: ObservableObject {
                     let restoredSelection = try multiOutput.reconcile(snapshot: fresh)
                     // 蓝牙设备抢占默认输出后已经恢复聚合设备，立即重读界面状态，避免短暂显示错误选中项。
                     if restoredSelection { fresh = try outputHardware.snapshot() }
-                    multiOutputError = nil
+                    if multiOutputError != nil { multiOutputError = nil }
                 }
-                catch { multiOutputError = error.localizedDescription }
+                catch {
+                    if multiOutputError != error.localizedDescription { multiOutputError = error.localizedDescription }
+                }
                 // 即便释放后还需报告成员断连，也不能把旧快照中的组合设备显示一轮。
                 if multiOutput.route == nil { fresh = try outputHardware.snapshot() }
             }
             if multiOutput.route == nil, singleOutputTargetUID != nil {
                 do {
                     fresh = try restoreSingleOutputIfBluetoothTookOver(fresh)
-                    multiOutputError = nil
+                    if multiOutputError != nil { multiOutputError = nil }
                 } catch {
-                    multiOutputError = error.localizedDescription
+                    if multiOutputError != error.localizedDescription { multiOutputError = error.localizedDescription }
                 }
             }
-            multiOutputRoute = multiOutput.route
+            if multiOutputRoute != multiOutput.route { multiOutputRoute = multiOutput.route }
             if monitorsSystem { headphones.updateOutput(resolvedHeadphoneOutput(from: fresh)) }
-            audio = fresh
-            audioError = nil
+            if audio != fresh { audio = fresh }
+            if audioError != nil { audioError = nil }
             if let output = fresh.outputs.first(where: { $0.id == fresh.selectedID }) {
                 // 不可见的已管理 App 也要暂停，不能在 X→Y→X 后悄悄恢复。
                 for key in Array(mixStates.keys) {
@@ -133,7 +188,8 @@ final class AppModel: ObservableObject {
                 }
             }
         } catch {
-            audio = nil; audioError = error.localizedDescription
+            if audio != nil { audio = nil }
+            if audioError != error.localizedDescription { audioError = error.localizedDescription }
             headphones.outputUnavailable()
             pauseManagedApplications("系统音频状态读取失败：\(error.localizedDescription)")
         }
@@ -173,8 +229,14 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshInputs() {
-        do { inputAudio = try SystemInput.snapshot(); inputError = nil }
-        catch { inputAudio = nil; inputError = error.localizedDescription }
+        do {
+            let nextInput = try SystemInput.snapshot()
+            if inputAudio != nextInput { inputAudio = nextInput }
+            if inputError != nil { inputError = nil }
+        } catch {
+            if inputAudio != nil { inputAudio = nil }
+            if inputError != error.localizedDescription { inputError = error.localizedDescription }
+        }
     }
 
     private var isFineTuneRunning: Bool {
@@ -656,6 +718,7 @@ final class AppModel: ObservableObject {
         isShutdown = true; headphones.shutdown()
         timer?.invalidate(); timer = nil
         meterTimer?.invalidate(); meterTimer = nil
+        removeOutputRouteListener()
         if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         return true
