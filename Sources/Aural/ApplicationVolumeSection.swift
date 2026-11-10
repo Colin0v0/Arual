@@ -3,6 +3,8 @@ import AuralCore
 
 struct ApplicationVolumeSection: View {
     @ObservedObject var model: AppModel
+    /// 只有当前可见的设备分区订阅实时电平，隐藏页仍保留滚动位置但不做 30Hz 重绘。
+    let metersVisible: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appLanguage) private var language
 
@@ -49,7 +51,9 @@ struct ApplicationVolumeSection: View {
     }
 
     private func applicationRow(_ app: ApplicationAudioRow, state: ApplicationMixState) -> some View {
-        ApplicationMixerRow(app: app, state: state, level: model.meterLevels[app.id],
+        ApplicationMixerRow(app: app, state: state,
+                            levelSource: model.levelSource(for: app.id),
+                            metersVisible: metersVisible,
                             awaitingStream: state.managed && model.sessions[app.id]?.isActive != true,
                             status: status(for: app, state: state),
                             toggleMute: { model.toggleApplicationMute(app.id) },

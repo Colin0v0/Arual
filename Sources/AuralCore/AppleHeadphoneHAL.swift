@@ -4,10 +4,12 @@ import Foundation
 public struct AppleHeadphoneSnapshot: Equatable, Sendable {
     public let noiseMode: NoiseMode
     public let supportedNoiseModes: [NoiseMode]
+    public let isWorn: Bool?
 
-    public init(noiseMode: NoiseMode, supportedNoiseModes: [NoiseMode]) {
+    public init(noiseMode: NoiseMode, supportedNoiseModes: [NoiseMode], isWorn: Bool? = nil) {
         self.noiseMode = noiseMode
         self.supportedNoiseModes = supportedNoiseModes
+        self.isWorn = isWorn
     }
 }
 
@@ -48,8 +50,27 @@ public enum AppleHeadphoneHAL {
         }
         return AppleHeadphoneSnapshot(
             noiseMode: current,
-            supportedNoiseModes: supportedModes(mask: supportMask, currentRaw: currentRaw)
+            supportedNoiseModes: supportedModes(mask: supportMask, currentRaw: currentRaw),
+            isWorn: try isWorn(deviceID: deviceID)
         )
+    }
+
+    /// BTAudio HAL 的 iede/iesb 为运行时属性：未公开或关闭入耳检测时返回未知，不猜测佩戴状态。
+    /// 只判断是否至少一只在耳，左右主副顺序不影响结果；属性依据 pods-control 的只读实现。
+    public static func isWorn(deviceID: AudioDeviceID) throws -> Bool? {
+        let enabledAddress = HAL.address(0x6965_6465)
+        let placementAddress = HAL.address(0x6965_7362)
+        guard isSupported(deviceID: deviceID), HAL.hasProperty(deviceID, enabledAddress),
+              HAL.hasProperty(deviceID, placementAddress) else { return nil }
+        let enabled: UInt32 = try HAL.read(deviceID, enabledAddress, initial: 0)
+        guard enabled == 1 else { return nil }
+        let placement = try HAL.read(deviceID, placementAddress, initial: (UInt32(0), UInt32(0)))
+        return wornState(primary: placement.0, secondary: placement.1)
+    }
+
+    static func wornState(primary: UInt32, secondary: UInt32) -> Bool? {
+        guard (1...3).contains(primary), (1...3).contains(secondary) else { return nil }
+        return primary == 1 || secondary == 1
     }
 
     /// 能力位图不声明“关闭”模式；只有设备当前确实处于关闭时才把关闭加入可选项。
@@ -62,27 +83,34 @@ public enum AppleHeadphoneHAL {
         return [.off, .cancellation, .transparency, .adaptive].filter { modes.contains($0) }
     }
 
-    public static func setNoiseMode(_ mode: NoiseMode, on deviceID: AudioDeviceID) throws -> AppleHeadphoneSnapshot {
-        let before = try snapshot(on: deviceID)
+    /// 设备 ID 可能在蓝牙重连后被复用，每次操作都同时核对 UID、存活状态及当前播放路由。
+    public static func validateControlTarget(_ output: AudioOutput) throws {
+        guard try HAL.string(output.id, kAudioDevicePropertyDeviceUID) == output.uid,
+              try HAL.read(output.id, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: UInt32(0)) != 0 else {
+            throw AudioFailure("Apple 耳机身份已改变或设备已断开")
+        }
+        try HeadphoneRouteGuard.check(output.uid)
+    }
+
+    /// 只提交一次写入。异步读回和取消由控制器完成，不在后台留一条不可取消的 sleep/write 链路。
+    public static func requestNoiseMode(_ mode: NoiseMode, output: AudioOutput) throws {
+        let before = try snapshot(on: output.id)
+        guard before.isWorn != false else { throw AppleHeadphoneNotWorn() }
         guard before.supportedNoiseModes.contains(mode) else {
             throw AudioFailure("Apple 耳机未公开“\(mode.title)”聆听模式")
         }
         guard let rawTarget = rawModes.first(where: { $0.value == mode })?.key else {
             throw AudioFailure("Apple 耳机没有该聆听模式的写入映射")
         }
-        guard try HAL.isSettable(deviceID, listeningModeAddress()) else {
+        guard try HAL.isSettable(output.id, listeningModeAddress()) else {
             throw AudioFailure("Apple 耳机聆听模式当前不可写")
         }
-
-        try HAL.write(deviceID, listeningModeAddress(), value: rawTarget)
-        // HAL 会先接受写入，再由系统向耳机确认；必须等待回读匹配后才宣告成功。
-        for _ in 0..<16 {
-            Thread.sleep(forTimeInterval: 0.05)
-            let observed: UInt32 = try HAL.read(deviceID, listeningModeAddress(), initial: 0)
-            if rawModes[observed] == mode {
-                return try snapshot(on: deviceID)
-            }
-        }
-        throw AudioFailure("Apple 耳机没有确认“\(mode.title)”切换")
+        try validateControlTarget(output)
+        try HAL.write(output.id, listeningModeAddress(), value: rawTarget)
     }
+}
+
+/// 明确的未佩戴状态不是连接失败，禁止在这个状态下继续发 SET。
+public struct AppleHeadphoneNotWorn: Error {
+    public init() {}
 }

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import AuralCore
 
 /// 菜单栏浮层完全由自己持有：打开时确定一次锚点，之后只沿该锚点改变高度。
 @MainActor
@@ -16,6 +17,7 @@ final class StatusPanelController: NSObject {
     private var localClickMonitor: Any?
     private var activationObserver: NSObjectProtocol?
     private var settingsLanguageCancellable: AnyCancellable?
+    private var statusBatteryCancellables: Set<AnyCancellable> = []
     private var presentationGeneration: UInt64 = 0
     private var popupPresented = false
 
@@ -55,11 +57,24 @@ final class StatusPanelController: NSObject {
         if let button = statusItem.button {
             button.image = AuralStatusIcon.make()
             button.image?.accessibilityDescription = "Aural 音频控制"
+            button.imagePosition = .imageLeading
+            button.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             button.target = self
             button.action = #selector(handleStatusItemAction)
             button.sendAction(on: StatusItemInteraction.actionEvents)
             button.toolTip = "Aural · 左键打开/收起，右键更多操作"
         }
+        updateStatusItemBattery()
+        statusBatteryCancellables.insert(AppSettings.shared.$showCurrentDeviceBattery
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateStatusItemBattery() }
+            })
+        statusBatteryCancellables.insert(model.headphones.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateStatusItemBattery() }
+            })
         // 语言切换只重绘设置窗口标题，不重建已经打开的窗口内容。
         settingsLanguageCancellable = AppSettings.shared.$language
             .receive(on: RunLoop.main)
@@ -104,9 +119,11 @@ final class StatusPanelController: NSObject {
             assertionFailure("状态栏按钮尚无可用的屏幕锚点")
             return
         }
+        let statusFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        popupLayout.setAvailableHeight(StatusPopupMetrics.availableHeight(statusItem: statusFrame,
+                                                                          screen: screen.visibleFrame))
         popup.contentView?.layoutSubtreeIfNeeded()
         popupLayout.beginPresentation()
-        let statusFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let frame = StatusPopupMetrics.openingFrame(statusItem: statusFrame, screen: screen.visibleFrame,
                                                    contentSize: popupLayout.size)
         popupTopLeft = CGPoint(x: frame.minX, y: frame.maxY)
@@ -198,10 +215,24 @@ final class StatusPanelController: NSObject {
     private func showStatusItemMenu() {
         guard let button = statusItem.button else { return }
         // 右键只叠加菜单，不关闭已展开的主面板；关闭菜单后保留原页签和窗口位置。
-        // 菜单保持极简，只提供打开、设置和退出；耳机详情与版本不再占用右键菜单。
+        // 菜单保持极简：打开、菜单栏电量开关、版本、设置和退出。
+        let updates = AuralUpdateChecker.shared
+        let restartVersion: String?
+        if case .ready = updates.phase {
+            restartVersion = updates.availableUpdate?.version
+        } else {
+            restartVersion = nil
+        }
         let menu = StatusItemMenu.make(openPanel: { [weak self] in self?.showPopup() },
                                        openSettings: { [weak self] in self?.showSettings() },
+                                       showBattery: AppSettings.shared.showCurrentDeviceBattery,
+                                       toggleBattery: {
+                                           AppSettings.shared.showCurrentDeviceBattery.toggle()
+                                       },
                                        quit: { NSApp.terminate(nil) },
+                                       version: AuralVersion.current,
+                                       restartVersion: restartVersion,
+                                       restartUpdate: { updates.restartAndInstall() },
                                        language: AppSettings.shared.resolvedLanguage)
         // 临时交给 NSStatusItem 的原生菜单路径，由 AppKit 选择屏幕、菜单栏下方的位置和高亮。
         // 普通 NSMenu.popUp 是视图弹出菜单，不具备状态栏菜单的锚定行为，可能覆盖菜单栏。
@@ -216,6 +247,20 @@ final class StatusPanelController: NSObject {
 
     private var settingsWindowTitle: String {
         L10n.text("Aural 设置", language: AppSettings.shared.resolvedLanguage)
+    }
+
+    private func updateStatusItemBattery() {
+        guard let button = statusItem.button else { return }
+        let enabled = AppSettings.shared.showCurrentDeviceBattery
+        let battery = model.headphones.battery
+        button.title = StatusItemBatteryText.title(enabled: enabled, percent: battery)
+        if enabled, let battery {
+            button.toolTip = "Aural · 当前设备电量 \(battery)% · 左键打开/收起，右键更多操作"
+            button.setAccessibilityValue("当前设备电量 \(battery)%")
+        } else {
+            button.toolTip = "Aural · 左键打开/收起，右键更多操作"
+            button.setAccessibilityValue(nil)
+        }
     }
 
     private func updateSettingsWindowTitle() {
@@ -233,13 +278,13 @@ extension StatusPanelController: NSWindowDelegate {
         if notification.object as? NSWindow === popup { hidePopup(); return }
     }
 }
-/// 顶栏 44、标签区 36、页脚 34；总高度限制在 300…674pt。
+/// 顶栏 44、标签区 36、页脚 34；显示时按当前屏幕的可用高度限制外框。
 /// 测量的是中部完整内容，最小高度只给视口留余量，不放大每行控件。
 enum PanelMetrics {
     // 与 Magpie 的 panelWidth 保持一致，菜单栏浮层使用 440pt 标准宽度。
     static let width: CGFloat = 440
     static let minimumHeight: CGFloat = 300
-    /// 给设备筛选列表留出完整展开高度；内容仍超过屏幕可用空间时才在内部滚动。
+    /// 未展示的初始布局使用这个尺寸预算；展示时由控制器注入实际屏幕上限。
     static let maximumContentHeight: CGFloat = 560
     static let chromeHeight: CGFloat = 114
     static let contentWidth: CGFloat = width - 24
@@ -252,12 +297,17 @@ enum PanelMetrics {
         CGRect(x: current.minX, y: current.maxY - size.height, width: size.width, height: size.height)
     }
 
-    static func viewportHeight(contentHeight: CGFloat) -> CGFloat {
-        max(minimumHeight - chromeHeight, min(ceil(contentHeight), maximumContentHeight))
+    static func viewportHeight(contentHeight: CGFloat,
+                               maximumHeight: CGFloat = chromeHeight + maximumContentHeight) -> CGFloat {
+        // 小屏幕也不能被最小高度挤出屏幕；自然内容始终测全，只限制最终视口。
+        let available = max(0, floor(maximumHeight) - chromeHeight)
+        return min(max(minimumHeight - chromeHeight, ceil(contentHeight)), available)
     }
 
-    static func size(contentHeight: CGFloat) -> CGSize {
-        CGSize(width: width, height: viewportHeight(contentHeight: contentHeight) + chromeHeight)
+    static func size(contentHeight: CGFloat,
+                     maximumHeight: CGFloat = chromeHeight + maximumContentHeight) -> CGSize {
+        CGSize(width: width,
+               height: viewportHeight(contentHeight: contentHeight, maximumHeight: maximumHeight) + chromeHeight)
     }
 }
 

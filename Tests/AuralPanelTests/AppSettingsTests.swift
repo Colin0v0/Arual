@@ -16,6 +16,7 @@ struct AppSettingsTests {
 
         #expect(!settings.showHeadphoneControls)
         #expect(!settings.showSimultaneousOutput)
+        #expect(!settings.showCurrentDeviceBattery)
     }
 
     @Test func settingsPersistAcrossInstances() throws {
@@ -29,12 +30,14 @@ struct AppSettingsTests {
         settings.appearance = .dark
         settings.showHeadphoneControls = false
         settings.showSimultaneousOutput = false
+        settings.showCurrentDeviceBattery = true
 
         let restored = AppSettings(defaults: defaults)
         #expect(restored.language == .english)
         #expect(restored.appearance == .dark)
         #expect(!restored.showHeadphoneControls)
         #expect(!restored.showSimultaneousOutput)
+        #expect(restored.showCurrentDeviceBattery)
     }
 
     @Test(arguments: ["zh-Hans", "zh-Hant", "en-US", "ja-JP"])
@@ -56,6 +59,12 @@ struct AppSettingsTests {
     @Test func englishDictionaryCoversSettingsAndDeviceCopy() {
         #expect(L10n.text("Aural 设置", language: .english) == "Aural Settings")
         #expect(L10n.text("显示多设备输出", language: .english) == "Show Multi-Device Output")
+        #expect(L10n.format("多设备输出 · %d 台", language: .english, arguments: [2])
+                == "Multi-Device Output · 2 Devices")
+        #expect(L10n.text("显示当前设备剩余电量", language: .english) == "Show Current Device Battery")
+        #expect(L10n.text("检查更新…", language: .english) == "Check for Updates…")
+        #expect(L10n.format("发现新版本 %@", language: .english, arguments: ["0.1.11"])
+                == "Version 0.1.11 is available")
         #expect(L10n.text("设备未公开可写的硬件静音控制", language: .english)
                 == "Device does not expose writable hardware mute")
         #expect(L10n.text("没有这个键", language: .chinese) == "没有这个键")
@@ -64,7 +73,7 @@ struct AppSettingsTests {
     @Test func settingsWindowUsesTheDeclaredFixedSize() {
         let size = SettingsMetrics.size
         #expect(size.width == 500)
-        #expect(size.height == 430)
+        #expect(size.height == 470)
     }
 
     @Test func settingsViewRendersAtFixedSizeInBothAppearances() throws {

@@ -7,6 +7,11 @@ enum StatusPopupMetrics {
     static let screenInset: CGFloat = 8
     static let topGap: CGFloat = 4
 
+    /// 顶边固定在状态栏下方，底边留出屏幕间距；兼容副屏与负坐标屏幕。
+    static func availableHeight(statusItem: CGRect, screen: CGRect) -> CGFloat {
+        floor(statusItem.minY - topGap - screen.minY - screenInset)
+    }
+
     static func openingFrame(statusItem: CGRect, screen: CGRect, contentSize: CGSize) -> CGRect {
         let x = min(max(statusItem.midX - contentSize.width / 2, screen.minX + screenInset),
                     screen.maxX - screenInset - contentSize.width)

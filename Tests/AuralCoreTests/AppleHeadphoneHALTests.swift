@@ -2,6 +2,16 @@ import Testing
 @testable import AuralCore
 
 struct AppleHeadphoneHALTests {
+    @Test func earPlacementRequiresKnownStatesAndDoesNotDependOnPrimarySide() {
+        #expect(AppleHeadphoneHAL.wornState(primary: 1, secondary: 2) == true)
+        #expect(AppleHeadphoneHAL.wornState(primary: 2, secondary: 1) == true)
+        #expect(AppleHeadphoneHAL.wornState(primary: 2, secondary: 2) == false)
+        #expect(AppleHeadphoneHAL.wornState(primary: 2, secondary: 3) == false)
+        #expect(AppleHeadphoneHAL.wornState(primary: 3, secondary: 3) == false)
+        #expect(AppleHeadphoneHAL.wornState(primary: 0, secondary: 1) == nil)
+        #expect(AppleHeadphoneHAL.wornState(primary: 1, secondary: 9) == nil)
+    }
+
     @Test func supportMaskExposesOnlyAdvertisedListeningModes() {
         // 原始线值 3 表示当前正在透传；能力位 7 同时公开降噪、透传和自适应。
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 3)

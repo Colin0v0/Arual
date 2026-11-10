@@ -2,13 +2,13 @@ import AppKit
 import SwiftUI
 
 /// 控件共用尺寸规范；喇叭只改变前景色，工具栏与文字操作保留白色悬停底。
-enum PanelActionHoverStyle {
+enum PanelActionHoverStyle: Equatable {
     case background
     case foregroundOnly
 }
 
 struct PanelActionButton: NSViewRepresentable {
-    enum Content {
+    enum Content: Equatable {
         case symbol(String)
         case text(String)
     }
@@ -49,11 +49,13 @@ struct PanelActionButton: NSViewRepresentable {
     }
 
     func updateNSView(_ button: PanelActionControl, context: Context) {
-        button.hoverStyle = hoverStyle
+        if button.hoverStyle != hoverStyle { button.hoverStyle = hoverStyle }
         button.setContent(content)
-        button.idleTint = tint.map { NSColor($0) }
+        let nextTint = tint.map { NSColor($0) }
+        if button.idleTint != nextTint { button.idleTint = nextTint }
         button.isLoading = isLoading
-        button.isEnabled = isEnabled && !isLoading
+        let nextEnabled = isEnabled && !isLoading
+        if button.isEnabled != nextEnabled { button.isEnabled = nextEnabled }
         button.toolTip = title
         button.setAccessibilityLabel(title)
         button.setAccessibilityValue(isLoading ? "正在\(title)" : nil)
@@ -92,6 +94,7 @@ enum PanelActionMetrics {
 final class PanelActionControl: NSButton {
     var activate: () -> Void = {}
     var makeMenu: (() -> NSMenu)?
+    private var renderedContent: PanelActionButton.Content?
     var hoverStyle: PanelActionHoverStyle = .background { didSet { updateAppearance() } }
     var idleTint: NSColor? { didSet { updateAppearance() } }
     private var hoverArea: NSTrackingArea?
@@ -153,6 +156,9 @@ final class PanelActionControl: NSButton {
     }
 
     func setContent(_ content: PanelActionButton.Content) {
+        // 页面切换会重建 SwiftUI 行，但原生按钮内容未变时不能重复创建 SF Symbol。
+        guard renderedContent != content else { return }
+        renderedContent = content
         switch content {
         case .symbol(let name):
             contentTitle = ""

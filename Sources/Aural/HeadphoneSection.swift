@@ -1,6 +1,25 @@
 import SwiftUI
 import AuralCore
 
+/// 每副耳机有独立卡片和控制器，布局不再提供互斥的目标选择器。
+struct HeadphoneControlsSection: View {
+    @ObservedObject var group: HeadphoneControllerGroup
+    @Environment(\.appLanguage) private var language
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if group.entries.isEmpty {
+                Text(L10n.text("当前输出路由中没有可控制的耳机", language: language))
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(12)
+            }
+            ForEach(group.entries) { entry in
+                HeadphoneSection(controller: entry.controller, output: entry.output)
+                if entry.id != group.entries.last?.id { PanelDivider() }
+            }
+        }
+    }
+}
+
 struct HeadphoneSection: View {
     @ObservedObject var controller: HeadphoneController
     let output: AudioOutput?
@@ -20,7 +39,7 @@ struct HeadphoneSection: View {
         switch controller.phase {
         case .failed: return L10n.text("重试", language: language)
         case .choosing: return L10n.text("重新扫描", language: language)
-        default: return L10n.text("连接耳机", language: language)
+        default: return L10n.text("启用耳机控制", language: language)
         }
     }
 
@@ -30,8 +49,11 @@ struct HeadphoneSection: View {
     }
 
     private var connectionStatusTitle: String {
+        if !controller.isRouteAuthorized { return L10n.text("正在切换音频路由…", language: language) }
+        if controller.isAwaitingWear { return L10n.text("未佩戴，戴回后恢复控制", language: language) }
         // 不展示广播候选列表，也不在身份不明确时任意选择一副耳机。
-        controller.phase == .choosing
+        if controller.isControlSuppressed { return L10n.text("耳机控制已暂停", language: language) }
+        return controller.phase == .choosing
             ? L10n.text("无法确定当前耳机，请重新扫描", language: language)
             : L10n.text(controller.phase.title, language: language)
     }
@@ -91,7 +113,7 @@ struct HeadphoneSection: View {
                           title: { L10n.text($0.title, language: language) }) { mode in
                     controller.setNoiseMode(mode)
                 }
-                .disabled(controller.busy)
+                .disabled(controller.busy || !controller.isRouteAuthorized)
                 .accessibilityLabel(L10n.text("耳机噪声控制", language: language))
                 // 点击不预先修改选中项；只有 SET 成功且 GET 匹配后，白色块才移动。
             }
@@ -103,9 +125,10 @@ struct HeadphoneSection: View {
                 // 刷新期间在原按钮里显示加载圈，保留固定宽度，不挤动旁边的操作。
                 PanelActionButton(L10n.text("刷新", language: language),
                                   isLoading: controller.busy) { controller.refresh() }
+                    .disabled(!controller.isRouteAuthorized)
                 Spacer()
                 if controller.canDisconnect {
-                    PanelActionButton(L10n.text("断开", language: language)) { controller.disconnect() }
+                    PanelActionButton(L10n.text("停止控制", language: language)) { controller.disconnect() }
                 }
             }
         }
@@ -113,7 +136,9 @@ struct HeadphoneSection: View {
 
     @ViewBuilder
     private var connectionAction: some View {
-        if controller.isReconnecting {
+        if controller.isAwaitingWear {
+            Text(L10n.text("等待佩戴", language: language)).foregroundStyle(PanelStyle.secondary)
+        } else if controller.isReconnecting {
             Button(L10n.text("取消重连", language: language)) { controller.disconnect() }
                 .buttonStyle(PanelButtonStyle())
         } else if canScan {

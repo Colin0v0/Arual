@@ -12,6 +12,13 @@ public struct AudioFailure: LocalizedError {
     public var errorDescription: String? { message }
 }
 
+/// HAL 枚举尚未收敛：列表仍包含已经失效的对象，不能据此确认设备消失或切换失败。
+public struct AudioSnapshotPending: LocalizedError {
+    public let failure: AudioFailure
+    public init(_ failure: AudioFailure) { self.failure = failure }
+    public var errorDescription: String? { failure.localizedDescription }
+}
+
 /// HAL 访问集中在一处；失败直接抛出，不尝试其他设备、通道或音量后端。
 public enum HAL {
     public static let system = AudioObjectID(kAudioObjectSystemObject)
@@ -157,6 +164,39 @@ public enum SystemAudio {
         return try HAL.string(selected, kAudioDevicePropertyDeviceUID)
     }
 
+    /// 当前默认输出是否直接等于目标，或是否为包含目标成员的真实聚合设备。
+    /// 多设备输出时默认 UID 是聚合设备，不能因此误判耳机已经不再是当前路由。
+    public static func selectedRouteContains(_ outputUID: String) throws -> Bool {
+        let selected: AudioDeviceID = try HAL.read(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), initial: 0)
+        guard selected != 0 else { throw AudioFailure("当前没有系统默认输出") }
+        let selectedUID = try HAL.string(selected, kAudioDevicePropertyDeviceUID)
+        if selectedUID == outputUID {
+            return try HAL.read(selected, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: UInt32(0)) != 0
+        }
+        let transport: UInt32 = try HAL.read(selected, HAL.address(kAudioDevicePropertyTransportType), initial: 0)
+        guard transport == kAudioDeviceTransportTypeAggregate else { return false }
+        let composition: CFDictionary = try HAL.read(selected,
+            HAL.address(kAudioAggregateDevicePropertyComposition), initial: [:] as CFDictionary)
+        let active = try readActiveOutputUIDs(
+            readActiveIDs: { try HAL.ids(selected, HAL.address(kAudioAggregateDevicePropertyActiveSubDeviceList)) },
+            readUID: { try HAL.string($0, kAudioDevicePropertyDeviceUID) }
+        )
+        return activeAggregateRouteContains(outputUID, composition: composition, activeUIDs: active)
+    }
+
+    /// 配置里仍留着一个成员，不代表 HAL 已经在使用它；所有厂商的控制授权都要求真实激活。
+    static func activeAggregateRouteContains(_ outputUID: String, composition: CFDictionary, activeUIDs: [String]) -> Bool {
+        aggregateCompositionContains(outputUID, composition: composition) && activeUIDs.contains(outputUID)
+    }
+
+    static func aggregateCompositionContains(_ outputUID: String, composition: CFDictionary) -> Bool {
+        guard let dictionary = composition as? [String: Any],
+              let members = dictionary[kAudioAggregateDeviceSubDeviceListKey] as? [[String: Any]] else {
+            return false
+        }
+        return members.contains { ($0[kAudioSubDeviceUIDKey] as? String) == outputUID }
+    }
+
     public static func snapshot() throws -> SystemAudioSnapshot {
         let ids = try HAL.ids(HAL.system, HAL.address(kAudioHardwarePropertyDevices))
         let outputs = try readOutputs(
@@ -207,7 +247,12 @@ public enum SystemAudio {
                         completed = true
                         continue
                     }
-                    if attempt == 1 { throw error }
+                    if attempt == 1 {
+                        if let failure = error as? AudioFailure, failure.status == HAL.badObjectStatus {
+                            throw AudioSnapshotPending(failure)
+                        }
+                        throw error
+                    }
                     // 聚合设备销毁时 HAL 可能短暂保留旧对象；只对明确的 `who?` 等待一个短窗口。
                     if let failure = error as? AudioFailure, failure.status == HAL.badObjectStatus {
                         Thread.sleep(forTimeInterval: 0.03)
@@ -238,30 +283,25 @@ public enum SystemAudio {
         try AudioDeviceControls.setMute(muted, on: device, direction: .output)
     }
 
+    /// 写入本次明确选择的两条默认路由；确认由协调器后续的 HAL 观察完成，不在主线程 sleep。
+    public static func requestSelection(_ device: AudioDeviceID) throws {
+        let alive: UInt32 = try HAL.read(device, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: 0)
+        let streams = try HAL.ids(device, HAL.address(kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput))
+        guard alive != 0, !streams.isEmpty else { throw AudioFailure("所选输出设备已断开") }
+        try HAL.write(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), value: device)
+        try HAL.write(HAL.system, HAL.address(kAudioHardwarePropertyDefaultSystemOutputDevice), value: device)
+    }
+
+    public static func selectedSystemOutputID() throws -> AudioDeviceID {
+        try HAL.read(HAL.system, HAL.address(kAudioHardwarePropertyDefaultSystemOutputDevice), initial: 0)
+    }
+
+    /// 同步调用者必须读回确认；交互路由使用 requestSelection 与异步阶段机。
     public static func select(_ device: AudioDeviceID) throws {
-        do {
-            // 只校验本次要切换的目标，避免无关设备在快照枚举期间消失时阻断输出切换。
-            let alive: UInt32 = try HAL.read(device, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: 0)
-            let streams = try HAL.ids(device, HAL.address(kAudioDevicePropertyStreams,
-                                                          scope: kAudioDevicePropertyScopeOutput))
-            let uid = try HAL.string(device, kAudioDevicePropertyDeviceUID)
-            guard alive != 0, !streams.isEmpty, !uid.isEmpty else {
-                throw AudioFailure("所选输出设备已断开")
-            }
-            try HAL.write(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), value: device)
-            // 系统提示音有独立的输出路由；只切媒体默认输出会让已移除的 AirPods 继续发声。
-            // 两条路由必须一起切换并分别确认，不能用界面选中状态代替硬件事实。
-            try HAL.write(HAL.system, HAL.address(kAudioHardwarePropertyDefaultSystemOutputDevice), value: device)
-            let systemActual: AudioDeviceID = try HAL.read(HAL.system,
-                HAL.address(kAudioHardwarePropertyDefaultSystemOutputDevice), initial: 0)
-            guard systemActual == device else { throw AudioFailure("系统未确认提示音输出切换，请刷新后检查") }
-            let actual: AudioDeviceID = try HAL.read(HAL.system,
-                                                     HAL.address(kAudioHardwarePropertyDefaultOutputDevice),
-                                                     initial: 0)
-            guard actual == device else { throw AudioFailure("系统未确认输出切换，请刷新后检查") }
-        } catch let failure as AudioFailure where failure.status == HAL.badObjectStatus {
-            // 直接读取目标设备时遇到 `who?` 表示目标已在切换期间离开，必须明确报告设备断开。
-            throw AudioFailure("所选输出设备已断开，请刷新后检查", status: failure.status)
+        try requestSelection(device)
+        let actual: AudioDeviceID = try HAL.read(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), initial: 0)
+        guard actual == device, try selectedSystemOutputID() == device else {
+            throw AudioFailure("系统未确认输出切换，请刷新后检查")
         }
     }
 

@@ -4,6 +4,7 @@ import AuralCore
 struct AudioPanel: View {
     @ObservedObject var model: AppModel
     @ObservedObject var layout: PanelPresentationLayout
+    @ObservedObject private var updates = AuralUpdateChecker.shared
     let openSettings: () -> Void
     let panelSizeChanged: (CGSize) -> Void
     let surface: MeterSurface
@@ -43,14 +44,14 @@ struct AudioPanel: View {
                     VStack(alignment: .leading, spacing: 10) {
                         switch page {
                         case .output:
-                            applicationControls(direction: .output)
+                            applicationControls(direction: .output,
+                                                metersVisible: currentPage == .output)
                         case .microphone:
-                            applicationControls(direction: .input)
+                            applicationControls(direction: .input,
+                                                metersVisible: currentPage == .microphone)
                         case .headphones:
                             // 耳机页只呈现耳机功能，设备音量与麦克风入口都留在音量页。
-                            HeadphoneSection(controller: model.headphones, output: model.audio.flatMap { audio in
-                                audio.outputs.first { $0.id == audio.selectedID }
-                            })
+                            HeadphoneControlsSection(group: model.headphones)
                         }
                     }
                     .padding(.horizontal, 12).padding(.top, 1).padding(.bottom, 12)
@@ -92,22 +93,22 @@ struct AudioPanel: View {
         currentPage.displaysApplications
     }
 
-    private func applicationControls(direction: AudioDeviceDirection) -> some View {
+    private func applicationControls(direction: AudioDeviceDirection,
+                                     metersVisible: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if hasErrors { errors }
             switch direction {
             case .output:
                 if let audio = model.audio {
-                    OutputRoutingSection(audio: audio, route: model.multiOutputRoute, error: model.multiOutputError,
+                    OutputRoutingSection(audio: audio, routing: model.outputRouting,
                                          select: model.selectOutput,
                                          setVolume: { model.setOutputVolume($0, on: $1) },
                                          setMuted: { model.setOutputMuted($0, on: $1) },
-                                         start: model.startSimultaneousOutput, stop: model.stopSimultaneousOutput,
+                                         stop: model.stopSimultaneousOutput,
                                          dismissError: model.dismissSimultaneousOutputError,
                                          setSimultaneousVolume: model.setSimultaneousOutputVolume,
                                          setSimultaneousMuted: model.setSimultaneousOutputMuted,
-                                         applySimultaneousOutput: model.updateSimultaneousOutput,
-                                         selectedHeightChanged: layout.requestSelectedPageResize,
+                                         toggleMember: model.toggleSimultaneousMember,
                                          showSimultaneousOutput: settings.showSimultaneousOutput)
                 }
             case .input:
@@ -115,7 +116,7 @@ struct AudioPanel: View {
             }
             PanelDivider().padding(.horizontal, 12)
             // 两个设备页都使用相同模型与回调，APP 音量依然是播放增益，不冒充麦克风混音。
-            ApplicationVolumeSection(model: model)
+            ApplicationVolumeSection(model: model, metersVisible: metersVisible)
         }
     }
 
@@ -141,11 +142,16 @@ struct AudioPanel: View {
             AuralBrandMark(size: 18)
             Text("Aural").font(PanelStyle.titleFont)
             Spacer()
+            updateBadge
             // 齿轮就是设置入口，左键直接打开设置窗口；诊断与系统权限留在右键菜单。
             PanelActionButton(systemName: "gearshape", title: settings.localized("设置"),
                               action: openSettings, menu: makeOptionsMenu)
                 .frame(width: PanelActionMetrics.size, height: PanelActionMetrics.size)
         }
+    }
+
+    @ViewBuilder private var updateBadge: some View {
+        AuralUpdateCapsule(updates: updates, settings: settings)
     }
 
     private var footer: some View {
@@ -188,6 +194,36 @@ struct AudioPanel: View {
         menu.addItem(.separator())
         menu.addItem(PanelActionMenuItem(title: settings.localized("设置…"), handler: openSettings))
         menu.addItem(PanelActionMenuItem(title: settings.localized("立即刷新"), handler: { model.refresh() }))
+        if let update = updates.availableUpdate {
+            switch updates.phase {
+            case .ready:
+                menu.addItem(PanelActionMenuItem(title: settings.localizedFormat("重启以更新到 %@", update.version)) {
+                    updates.restartAndInstall()
+                })
+            case .downloading(let progress):
+                let label = progress > 0
+                    ? settings.localizedFormat("正在下载更新 %@ · %d%%", update.version, Int((progress * 100).rounded()))
+                    : settings.localizedFormat("正在下载更新 %@…", update.version)
+                let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            case .preparing:
+                let item = NSMenuItem(title: settings.localizedFormat("正在准备更新 %@…", update.version),
+                                      action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            case .available, .failed, .idle:
+                menu.addItem(PanelActionMenuItem(title: settings.localizedFormat("更新到 %@", update.version)) {
+                    updates.downloadAndPrepare()
+                })
+            }
+        } else {
+            let check = PanelActionMenuItem(title: settings.localized(updates.isChecking ? "正在检查更新…" : "检查更新…")) {
+                updates.check(force: true)
+            }
+            check.isEnabled = !updates.isChecking
+            menu.addItem(check)
+        }
         menu.addItem(.separator())
         menu.addItem(PanelActionMenuItem(title: settings.localized("音频录制权限…")) {
             let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!

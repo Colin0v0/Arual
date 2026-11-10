@@ -13,6 +13,7 @@ private final class LoginItemState: ObservableObject {
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
+    @ObservedObject private var updates = AuralUpdateChecker.shared
     @StateObject private var loginItem = LoginItemState()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -121,6 +122,12 @@ struct SettingsView: View {
                 detail: settings.localized("关闭后，多设备输出功能从输出面板隐藏。"),
                 isOn: simultaneousOutputBinding
             )
+            PanelDivider()
+            SettingsToggleRow(
+                title: settings.localized("显示当前设备剩余电量"),
+                detail: settings.localized("在菜单栏 Aural 图标右侧显示当前设备电量。"),
+                isOn: $settings.showCurrentDeviceBattery
+            )
         }
     }
 
@@ -130,6 +137,23 @@ struct SettingsView: View {
                 .font(PanelStyle.captionFont)
                 .foregroundStyle(PanelStyle.secondary)
             Spacer()
+            if let error = updates.lastError {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(PanelStyle.captionFont)
+                    .foregroundStyle(PanelStyle.error)
+                    .help(error)
+            }
+            if updates.availableUpdate != nil {
+                AuralUpdateCapsule(updates: updates, settings: settings)
+            } else {
+                Button(settings.localized(updates.isChecking ? "正在检查更新…" : "检查更新")) {
+                    updates.check(force: true)
+                }
+                .buttonStyle(.plain)
+                .font(PanelStyle.captionFont)
+                .foregroundStyle(PanelStyle.secondary)
+                .disabled(updates.isChecking)
+            }
         }
     }
 
@@ -143,7 +167,8 @@ struct SettingsView: View {
                 }
                 // 先完成真实资源释放；只有没有残留组合设备时才隐藏功能入口。
                 model.stopSimultaneousOutput()
-                if model.multiOutputRoute == nil, model.unmanagedMultiOutputs.isEmpty {
+                if !model.outputRouting.phase.isBusy, model.outputRouting.phase != .failed,
+                   model.outputRouting.pendingCleanup.isEmpty {
                     settings.showSimultaneousOutput = false
                 }
             }
@@ -169,7 +194,7 @@ struct SettingsView: View {
 
 enum SettingsMetrics {
     static let width: CGFloat = 500
-    static let height: CGFloat = 430
+    static let height: CGFloat = 470
     static let controlWidth: CGFloat = 238
     static let rowHeight: CGFloat = 40
     static var size: CGSize { CGSize(width: width, height: height) }

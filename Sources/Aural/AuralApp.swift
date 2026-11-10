@@ -38,6 +38,7 @@ final class AuralDelegate: NSObject, NSApplicationDelegate {
             if !result.errors.isEmpty { model.operationError = result.errors.joined(separator: "；") }
             self.model = model
             self.statusPanel = StatusPanelController(model: model)
+            AuralUpdateChecker.shared.startAutomaticChecking()
         }
     }
 
@@ -48,8 +49,21 @@ final class AuralDelegate: NSObject, NSApplicationDelegate {
         // 不为退出操作构造 AppModel，也不因清理失败把启动留在无界面的后台。
         guard !fatalStartupFailure, let model else { return .terminateNow }
         do { try audioPermission.stop() }
-        catch { model.operationError = error.localizedDescription; return .terminateCancel }
-        return model.shutdown() ? .terminateNow : .terminateCancel
+        catch {
+            AuralUpdateChecker.shared.cancelPendingRestart()
+            model.operationError = error.localizedDescription
+            return .terminateCancel
+        }
+        guard model.shutdown() else {
+            AuralUpdateChecker.shared.cancelPendingRestart()
+            return .terminateCancel
+        }
+        return .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 只有前面的音频、组合设备和耳机资源都清理成功后，退出阶段才启动替换 helper。
+        AuralUpdateChecker.shared.launchInstallerIfPending()
     }
 }
 

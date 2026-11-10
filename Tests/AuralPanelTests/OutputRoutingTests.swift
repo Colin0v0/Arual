@@ -7,42 +7,11 @@ import Testing
 
 @MainActor
 struct OutputRoutingTests {
-    @Test func draftKeepsOrderAndAllowsOneDevice() {
-        let selection = OutputRoutingSelection()
-        let outputs = OutputDevicesLayoutTests.fixture.outputs
-        selection.begin()
-        #expect(selection.isChoosing)
-        #expect(selection.uids.isEmpty)
-        #expect(selection.toggleAndDecide(outputs[0].uid, routeIsActive: false) == .start([outputs[0].uid]))
-        #expect(selection.canStart(available: outputs))
-        #expect(selection.toggleAndDecide(outputs[1].uid, routeIsActive: true)
-                == .update([outputs[0].uid, outputs[1].uid]))
-        #expect(selection.canStart(available: outputs))
-        #expect(selection.toggleAndDecide(outputs[0].uid, routeIsActive: true) == .update([outputs[1].uid]))
-        #expect(selection.uids == [outputs[1].uid])
-        #expect(selection.canStart(available: outputs))
-        #expect(selection.toggleAndDecide(outputs[0].uid, routeIsActive: true)
-                == .update([outputs[1].uid, outputs[0].uid]))
-        #expect(selection.uids == [outputs[1].uid, outputs[0].uid])
-        #expect(selection.toggleAndDecide(outputs[1].uid, routeIsActive: true) == .update([outputs[0].uid]))
-        #expect(selection.toggleAndDecide(outputs[0].uid, routeIsActive: true) == .none)
-        #expect(selection.uids == [outputs[0].uid])
-        selection.cancel()
-        #expect(!selection.isChoosing)
-    }
-
-    @Test func emptySelectionCannotStartAndSingleHardwareCanStart() {
-        let selection = OutputRoutingSelection()
-        let outputs = OutputDevicesLayoutTests.fixture.outputs
-        let aggregate = AudioOutput(id: 99, uid: "aggregate", name: "多输出", transport: kAudioDeviceTransportTypeAggregate)
-        selection.begin()
-        #expect(selection.uids.isEmpty)
-        #expect(!selection.canStart(available: [outputs[0], aggregate]))
-        #expect(selection.toggleAndDecide(outputs[0].uid, routeIsActive: false) == .start([outputs[0].uid]))
-        #expect(selection.canStart(available: [outputs[0], aggregate]))
-        #expect(selection.toggleAndDecide(outputs[1].uid, routeIsActive: true)
-                == .update([outputs[0].uid, outputs[1].uid]))
-        #expect(selection.canStart(available: outputs))
+    @Test func disclosureHasNoPlaybackSelectionOrStopSideEffect() {
+        let disclosure = OutputRoutingDisclosure()
+        disclosure.isChoosing = true
+        disclosure.cancel()
+        #expect(!disclosure.isChoosing)
     }
 
     @Test @MainActor func simultaneousEntryUsesTheSameRowPitchAsTheMicrophonePage() throws {
@@ -53,9 +22,9 @@ struct OutputRoutingTests {
             controls: [output.id: try #require(OutputDevicesLayoutTests.fixture.controls[output.id])]
         )
         let routing = NSHostingView(rootView:
-            OutputRoutingSection(audio: outputSnapshot, route: nil, error: nil,
+            OutputRoutingSection(audio: outputSnapshot, routing: routingFixture(snapshot: outputSnapshot),
                                  select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in },
-                                 start: { _ in false }, stop: {}, dismissError: {})
+                                 stop: {}, dismissError: {}, toggleMember: { _ in })
                 .frame(width: PanelMetrics.contentWidth)
         )
         routing.frame.size = routing.fittingSize
@@ -86,8 +55,8 @@ struct OutputRoutingTests {
         var starts = 0
         var stops = 0
         let host = NSHostingView(rootView: OutputRoutingSection(audio: OutputDevicesLayoutTests.fixture,
-            route: nil, error: nil, select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in },
-            start: { _ in starts += 1; return true }, stop: { stops += 1 }, dismissError: {})
+            routing: routingFixture(snapshot: OutputDevicesLayoutTests.fixture), select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in },
+            stop: { stops += 1 }, dismissError: {}, toggleMember: { _ in })
             .frame(width: PanelMetrics.contentWidth).background(PanelStyle.canvas))
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
@@ -107,8 +76,8 @@ struct OutputRoutingTests {
                                      previousOutputUID: fixture.outputs[0].uid, sampleRate: 48_000)
         let aggregate = AudioOutput(id: 99, uid: route.uid, name: "Aural 同时输出", transport: kAudioDeviceTransportTypeAggregate)
         let snapshot = SystemAudioSnapshot(outputs: fixture.outputs + [aggregate], selectedID: 99, controls: fixture.controls)
-        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, route: route, error: nil,
-            select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in }, start: { _ in false }, stop: {}, dismissError: {})
+        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, routing: routingFixture(snapshot: snapshot, route: route),
+            select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in }, stop: {}, dismissError: {}, toggleMember: { _ in })
             .frame(width: PanelMetrics.contentWidth).background(PanelStyle.canvas))
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
@@ -124,18 +93,13 @@ struct OutputRoutingTests {
         let route = MultiOutputRoute(deviceID: 99, uid: "fixture-multi", outputs: Array(fixture.outputs.prefix(2)),
                                      mainOutputUID: fixture.outputs[0].uid,
                                      previousOutputUID: fixture.outputs[0].uid, sampleRate: 48_000)
-        let selection = OutputRoutingSelection()
-        selection.begin(route: route)
-        #expect(selection.uids == route.outputs.map(\.uid))
+        let selected = Set(route.outputs.map(\.uid))
         var stops = 0
         var muteWrites: [(Bool, UInt32)] = []
         let host = NSHostingView(rootView:
-            SimultaneousOutputEditor(selection: selection, outputs: fixture.outputs, controls: fixture.controls,
-                                     route: route,
-                                     start: { _ in false }, stop: { stops += 1 },
-                                     setVolume: { _, _ in }, setMuted: { muteWrites.append(($0, $1)) },
-                                     applySimultaneousOutput: { _ in false },
-                                     selectedHeightChanged: {})
+            SimultaneousOutputEditor(outputs: fixture.outputs, controls: fixture.controls,
+                                     selectedUIDs: selected, toggleMember: { _ in },
+                                     setVolume: { _, _ in }, setMuted: { muteWrites.append(($0, $1)) })
                 .frame(width: PanelMetrics.contentWidth)
                 .background(PanelStyle.canvas)
         )
@@ -149,23 +113,18 @@ struct OutputRoutingTests {
         #expect(muteWrites.count == 1)
         #expect(muteWrites.first?.0 == true)
         #expect(muteWrites.first?.1 == fixture.outputs[0].id)
-        #expect(selection.uids == route.outputs.map(\.uid))
+        #expect(selected == Set(route.outputs.map(\.uid)))
         try export(host, to: "/tmp/aural-multi-output-editor.png")
         #expect(stops == 0)
     }
 
     @Test func expandedNewRouteEditorKeepsCompactHierarchy() throws {
         let fixture = OutputDevicesLayoutTests.fixture
-        let selection = OutputRoutingSelection()
-        selection.begin()
-        selection.toggle(fixture.outputs[0].uid)
+        let selected: Set<String> = [fixture.outputs[0].uid]
         let host = NSHostingView(rootView:
-            SimultaneousOutputEditor(selection: selection, outputs: fixture.outputs, controls: fixture.controls,
-                                     route: nil,
-                                     start: { _ in false }, stop: {},
-                                     setVolume: { _, _ in }, setMuted: { _, _ in },
-                                     applySimultaneousOutput: { _ in false },
-                                     selectedHeightChanged: {})
+            SimultaneousOutputEditor(outputs: fixture.outputs, controls: fixture.controls,
+                                     selectedUIDs: selected, toggleMember: { _ in },
+                                     setVolume: { _, _ in }, setMuted: { _, _ in })
                 .frame(width: PanelMetrics.contentWidth)
                 .background(PanelStyle.canvas)
         )
@@ -209,9 +168,9 @@ struct OutputRoutingTests {
         let snapshot = SystemAudioSnapshot(outputs: fixture.outputs + [previous], selectedID: previous.id,
                                            controls: fixture.controls)
         var writes = 0
-        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, route: nil, error: nil,
+        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, routing: routingFixture(snapshot: snapshot),
             select: { _ in writes += 1 }, setVolume: { _, _ in writes += 1 }, setMuted: { _, _ in writes += 1 },
-            start: { _ in writes += 1; return false }, stop: { writes += 1 }, dismissError: {})
+            stop: { writes += 1 }, dismissError: {}, toggleMember: { _ in })
             .frame(width: PanelMetrics.contentWidth).background(PanelStyle.canvas))
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
@@ -231,9 +190,9 @@ struct OutputRoutingTests {
         let snapshot = SystemAudioSnapshot(outputs: fixture.outputs + [previous], selectedID: fixture.selectedID,
                                            controls: fixture.controls)
         var cleanups = 0
-        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, route: nil, error: nil,
-            select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in }, start: { _ in false },
-            stop: { cleanups += 1 }, dismissError: {}).frame(width: PanelMetrics.contentWidth))
+        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, routing: routingFixture(snapshot: snapshot),
+            select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in },
+            stop: { cleanups += 1 }, dismissError: {}, toggleMember: { _ in }).frame(width: PanelMetrics.contentWidth))
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
         let cleanup = try #require(findButtons(host).first { $0.toolTip == "清理残留设备" })
@@ -253,17 +212,41 @@ struct OutputRoutingTests {
         #expect(!session.isActive)
     }
 
+    @Test func multiOutputPlaybackRouteMirrorsRealMembersWithTheSelectedMainClock() throws {
+        let members = Array(OutputDevicesLayoutTests.fixture.outputs.prefix(2))
+        let aggregate = AudioOutput(id: 99, uid: "local.aural.multi.fixture",
+                                    name: "Aural 多设备输出",
+                                    transport: kAudioDeviceTransportTypeAggregate)
+        let route = try ApplicationPlaybackRoute(output: aggregate,
+                                                 playbackOutputs: members,
+                                                 mainOutputUID: members[1].uid)
+        let description = route.aggregateDescription(tapUUID: UUID(),
+                                                     aggregateUID: "local.aural.tap.fixture")
+        let devices = try #require(description[kAudioAggregateDeviceSubDeviceListKey] as? [[String: Any]])
+
+        // Process Tap 必须挂在聚合设备真实的主设备上；直接监听公开聚合 UID
+        // 会在多设备路由里得到持续为 0 的回调。重放成员仍是真实硬件。
+        #expect(route.tapDeviceUID == members[1].uid)
+        #expect(route.playbackDeviceUIDs == members.map(\.uid))
+        #expect(route.mainDeviceUID == members[1].uid)
+        #expect(route.isStacked)
+        #expect(description[kAudioAggregateDeviceMainSubDeviceKey] as? String == members[1].uid)
+        #expect(devices.count == 2)
+        #expect((devices[0][kAudioSubDeviceDriftCompensationKey] as? NSNumber)?.intValue == 1)
+        #expect((devices[1][kAudioSubDeviceDriftCompensationKey] as? NSNumber)?.intValue == 0)
+    }
+
     @Test func retainedButInactiveRouteShowsCleanupInsteadOfClaimingPlayback() {
         let snapshot = OutputDevicesLayoutTests.fixture
         let route = MultiOutputRoute(deviceID: 99, uid: "fixture-multi", outputs: Array(snapshot.outputs.prefix(2)),
                                      mainOutputUID: snapshot.outputs[0].uid,
                                      previousOutputUID: snapshot.outputs[0].uid, sampleRate: 48_000)
-        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, route: route, error: "释放失败",
-            select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in }, start: { _ in false }, stop: {}, dismissError: {})
+        let host = NSHostingView(rootView: OutputRoutingSection(audio: snapshot, routing: routingFixture(snapshot: snapshot, route: route, error: "释放失败"),
+            select: { _ in }, setVolume: { _, _ in }, setMuted: { _, _ in }, stop: {}, dismissError: {}, toggleMember: { _ in })
             .frame(width: PanelMetrics.contentWidth))
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
-        #expect(findButtons(host).contains { $0.toolTip == "重试释放" })
+        #expect(findButtons(host).contains { $0.toolTip == "清理残留设备" })
         #expect(!findButtons(host).contains { $0.toolTip == "结束同时输出" })
     }
 
@@ -277,4 +260,22 @@ struct OutputRoutingTests {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try #require(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: path))
     }
+}
+
+/// 测试显式构造已经观察确认的状态，视图不再从 route 是否非空推导实际勾选。
+@MainActor
+func routingFixture(snapshot: SystemAudioSnapshot, route: MultiOutputRoute? = nil, error: String? = nil) -> OutputRoutingState {
+    var state = OutputRoutingState()
+    state.actualOutput = snapshot.outputs.first { $0.id == snapshot.selectedID }
+    state.error = error
+    if let route, let actual = state.actualOutput, actual.id == route.deviceID, error == nil {
+        state.confirmed = ConfirmedOutputRoute(intent: .simultaneous(route.outputs.map(\.uid)), output: actual, aggregate: route)
+        state.phase = .confirmed
+    } else {
+        state.pendingCleanup = snapshot.outputs.filter(\.isAuralMultiOutput)
+        if let route, state.pendingCleanup.isEmpty {
+            state.pendingCleanup = [AudioOutput(id: route.deviceID, uid: route.uid, name: "残留组合", transport: kAudioDeviceTransportTypeAggregate)]
+        }
+    }
+    return state
 }

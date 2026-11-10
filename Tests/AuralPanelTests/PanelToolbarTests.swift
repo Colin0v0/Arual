@@ -12,8 +12,10 @@ struct PanelToolbarTests {
         #expect((button.cell as? NSButtonCell)?.highlightsBy == [])
     }
 
-    @Test @MainActor func controlsUseWhiteHoverRatherThanTheGrayPageSurface() throws {
-        let color = try #require(NSColor(PanelStyle.controlHover).usingColorSpace(.deviceRGB))
+    @Test @MainActor func lightControlsUseWhiteHoverRatherThanTheGrayPageSurface() throws {
+        // 其他设置测试会切换全局外观；浅色断言必须显式指定 Aqua，不能依赖运行顺序。
+        let appearance = try #require(NSAppearance(named: .aqua))
+        let color = try #require(PanelStyle.controlHoverNSColor(for: appearance).usingColorSpace(.deviceRGB))
         #expect(color.redComponent == 1)
         #expect(color.greenComponent == 1)
         #expect(color.blueComponent == 1)

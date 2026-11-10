@@ -22,6 +22,18 @@ struct StatusPopupPlacementTests {
         }
     }
 
+    @Test func screenHeightBudgetKeepsLongPanelsInsideTheirScreen() {
+        for screen in [CGRect(x: 0, y: 0, width: 1440, height: 876),
+                       CGRect(x: -1440, y: -900, width: 1440, height: 876)] {
+            let status = CGRect(x: screen.midX, y: screen.maxY, width: 24, height: 24)
+            let available = StatusPopupMetrics.availableHeight(statusItem: status, screen: screen)
+            let size = PanelMetrics.size(contentHeight: 2_000, maximumHeight: available)
+            let frame = StatusPopupMetrics.openingFrame(statusItem: status, screen: screen, contentSize: size)
+            #expect(frame.minY == screen.minY + StatusPopupMetrics.screenInset)
+            #expect(frame.maxY == status.minY - StatusPopupMetrics.topGap)
+        }
+    }
+
     @Test func openingOnlyClampsToCurrentScreenAndSupportsNegativeScreenCoordinates() {
         let screen = CGRect(x: -1440, y: 0, width: 1440, height: 876)
         for statusX: CGFloat in [-1436, -720, -36] {

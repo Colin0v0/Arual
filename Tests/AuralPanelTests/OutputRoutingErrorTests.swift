@@ -8,6 +8,9 @@ import Testing
 
 @MainActor
 struct OutputRoutingErrorTests {
+    private static let previousDevice = AudioOutput(id: 88, uid: "local.aural.multi.previous-session",
+                                                    name: "Aural 同时输出", transport: kAudioDeviceTransportTypeAggregate)
+
     @Test func unchangedRefreshDoesNotRepublishModelState() {
         let fixture = RoutingHardwareFixture()
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
@@ -18,6 +21,26 @@ struct OutputRoutingErrorTests {
         model.refresh()
         #expect(updates == 0)
         withExtendedLifetime(cancellable) {}
+    }
+
+    @Test func meterUpdatesStayInsideApplicationLevelSource() {
+        let fixture = RoutingHardwareFixture()
+        let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
+        var modelUpdates = 0
+        let modelCancellable = model.objectWillChange.sink { modelUpdates += 1 }
+        let source = model.levelSource(for: "bundle:test.music")
+        #expect(model.levelSource(for: "bundle:test.music") === source)
+
+        var sourceUpdates = 0
+        let sourceCancellable = source.objectWillChange.sink { sourceUpdates += 1 }
+        source.update(0.7)
+        source.update(0.7)
+
+        // 30Hz 电平只能刷新自己的小视图，不能让整个面板和三个分区重新布局。
+        #expect(sourceUpdates == 1)
+        #expect(modelUpdates == 0)
+        #expect(source.level == 0.7)
+        withExtendedLifetime((modelCancellable, sourceCancellable)) {}
     }
 
     @Test func startupRecognizesPreviousDeviceWithoutRestoringOrChangingOutput() {
@@ -113,46 +136,60 @@ struct OutputRoutingErrorTests {
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
         #expect(model.startSimultaneousOutput([fixture.outputs[0].uid]))
         #expect(fixture.composition == nil)
-        #expect(fixture.selections == [fixture.outputs[0].id])
+        #expect(fixture.selections.isEmpty)
         #expect(model.multiOutputRoute == nil)
         #expect(model.singleOutputTargetUID == fixture.outputs[0].uid)
         #expect(model.multiOutputError == nil)
         #expect(!model.applicationAudioUnavailable)
     }
 
-    @Test func singleDeviceTargetSurvivesBluetoothTakingTheDefaultOutput() {
+    @Test func activeAuralMultiOutputKeepsPerAppControlsAvailable() {
+        let fixture = RoutingHardwareFixture()
+        let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
+        #expect(model.startSimultaneousOutput(fixture.outputs.map(\.uid)))
+        #expect(model.multiOutputRoute?.deviceID == 99)
+        #expect(model.audio?.selectedID == 99)
+        // Aural 聚合是 APP 音频的捕获来源，具备真实成员后才能继续重放；
+        // 因此当前路由不能再返回“不支持独立音量”的禁用原因。
+        #expect(!model.applicationAudioUnavailable)
+        #expect(model.applicationAudioUnavailableReason == nil)
+    }
+
+    @Test func externalBluetoothSelectionMigratesSingleModeWithoutStealingItBack() {
         let fixture = RoutingHardwareFixture()
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
         #expect(model.startSimultaneousOutput([fixture.outputs[0].uid]))
 
-        // 蓝牙耳机在系统层抢走默认输出后，刷新必须恢复用户保留的唯一设备。
+        // 外部选择无法可靠归因，Aural 不擅自抢回。
         fixture.selected = fixture.outputs[1].id
         model.refresh()
-        #expect(fixture.selections == [fixture.outputs[0].id, fixture.outputs[0].id])
-        #expect(fixture.selected == fixture.outputs[0].id)
-        #expect(model.audio?.selectedID == fixture.outputs[0].id)
+        #expect(fixture.selections.isEmpty)
+        #expect(fixture.selected == fixture.outputs[1].id)
+        #expect(model.audio?.selectedID == fixture.outputs[1].id)
+        #expect(model.outputRouting.phase == .stable)
         #expect(model.multiOutputError == nil)
+        #expect(model.outputRouting.confirmed?.output.id == fixture.outputs[1].id)
     }
 
-    @Test func stoppingSingleDeviceModeReleasesThePinWithoutChangingOutput() {
+    @Test func stoppingSingleDeviceModeOnlyChangesModeIdentity() {
         let fixture = RoutingHardwareFixture()
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
         #expect(model.startSimultaneousOutput([fixture.outputs[0].uid]))
         model.stopSimultaneousOutput()
         #expect(model.singleOutputTargetUID == nil)
         #expect(fixture.selected == fixture.outputs[0].id)
-        #expect(fixture.selections == [fixture.outputs[0].id])
+        #expect(fixture.selections.isEmpty)
         #expect(model.multiOutputRoute == nil)
     }
 
-    @Test func explicitPhysicalDeviceSelectionEndsSingleDevicePin() {
+    @Test func explicitPhysicalDeviceSelectionEndsSingleDeviceMode() {
         let fixture = RoutingHardwareFixture()
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
         #expect(model.startSimultaneousOutput([fixture.outputs[0].uid]))
         model.selectOutput(fixture.outputs[1].id)
         #expect(model.singleOutputTargetUID == nil)
         #expect(fixture.selected == fixture.outputs[1].id)
-        #expect(fixture.selections == [fixture.outputs[0].id, fixture.outputs[1].id])
+        #expect(fixture.selections == [fixture.outputs[1].id])
     }
 
     @Test func shrinkingRouteToOneDeviceReleasesAggregateAndRestoresAppControls() {
@@ -168,34 +205,31 @@ struct OutputRoutingErrorTests {
         #expect(!model.applicationAudioUnavailable)
     }
 
-    @Test func shrinkingRouteKeepsCleanupEntryWhenAggregateRemovalIsUnconfirmed() {
+    @Test func shrinkingRouteWaitsForDelayedAggregateRemovalWithoutAnError() {
         let fixture = RoutingHardwareFixture()
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
         #expect(model.startSimultaneousOutput(fixture.outputs.map(\.uid)))
         fixture.keepAggregateAfterDestroy = true
-
         #expect(!model.updateSimultaneousOutput([fixture.outputs[1].uid]))
-        #expect(model.multiOutputRoute?.deviceID == 99)
-        #expect(model.multiOutputError != nil)
-
-        fixture.keepAggregateAfterDestroy = false
-        model.stopSimultaneousOutput()
+        #expect(model.outputRouting.phase == .awaitingHAL)
         #expect(model.multiOutputRoute == nil)
         #expect(model.multiOutputError == nil)
+        fixture.keepAggregateAfterDestroy = false
+        fixture.composition = nil // HAL 稍后完成移除，不是发出第二次销毁命令。
+        model.refresh()
+        #expect(model.outputRouting.phase == .confirmed)
+        #expect(model.outputRouting.selectedMemberUIDs == [fixture.outputs[1].uid])
+        #expect(model.outputRouting.pendingCleanup.isEmpty)
+        #expect(fixture.destroyAttempts == 1)
     }
-
-    private static let previousDevice = AudioOutput(id: 88, uid: "local.aural.multi.previous-session",
-                                                    name: "Aural 同时输出", transport: kAudioDeviceTransportTypeAggregate)
 
     @Test func failedDraftCanBeCancelledWithoutAnotherAudioWrite() {
         let fixture = RoutingHardwareFixture()
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
-        let selection = OutputRoutingSelection()
-        selection.begin()
-        selection.toggle(fixture.outputs[0].uid)
-        selection.toggle(fixture.outputs[1].uid)
+        let selection = OutputRoutingDisclosure()
+        selection.isChoosing = true
         fixture.failCreation = true
-        #expect(!model.startSimultaneousOutput(selection.uids))
+        #expect(!model.startSimultaneousOutput(fixture.outputs.map(\.uid)))
         #expect(model.multiOutputError != nil)
         #expect(model.multiOutputRoute == nil)
         selection.cancel()
@@ -217,19 +251,34 @@ struct OutputRoutingErrorTests {
         #expect(fixture.selections.isEmpty)
     }
 
-    @Test func successfulStopClearsActiveErrorAndItDoesNotReturnOnRefresh() {
+    @Test func stoppingPartialPlaybackDoesNotLeaveAnErrorOrResidualGroup() {
         let fixture = RoutingHardwareFixture()
-        let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false)
+        var now = Date(timeIntervalSince1970: 1_000)
+        let environment = ApplicationAudioEnvironment(
+            readApplications: { _ in ([], 0) },
+            hasMixerConflict: { false },
+            makeSession: { _, _, _, _ in fatalError("该测试不创建音频会话") },
+            now: { now }
+        )
+        let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false,
+                             applicationAudio: environment)
         #expect(model.startSimultaneousOutput(fixture.outputs.map(\.uid)))
         fixture.offline.insert(fixture.outputs[1].id)
+        // 一副耳机离线时剩余扬声器继续播放，不要求用户清理残留设备。
+        now = now.addingTimeInterval(0.2)
         model.refresh()
-        #expect(model.multiOutputError != nil)
-        #expect(model.multiOutputRoute != nil)
+        #expect(model.multiOutputError == nil)
+        #expect(model.outputRouting.confirmed?.output.uid == fixture.outputs[0].uid)
+        now = now.addingTimeInterval(3.2)
+        model.refresh()
+        #expect(model.multiOutputError == nil)
+        #expect(model.multiOutputRoute == nil)
+        #expect(model.outputRouting.pendingCleanup.isEmpty)
         model.stopSimultaneousOutput()
         model.refresh()
         #expect(model.multiOutputError == nil)
         #expect(model.multiOutputRoute == nil)
-        #expect(fixture.selections == [99, fixture.outputs[0].id, fixture.outputs[0].id])
+        #expect(fixture.selections == [99, fixture.outputs[0].id])
         #expect(fixture.destroyed == [99])
     }
 
@@ -241,7 +290,7 @@ struct OutputRoutingErrorTests {
         #expect(model.updateSimultaneousOutput(reordered))
         #expect(model.multiOutputRoute?.outputs.map(\.uid) == reordered)
         #expect(fixture.destroyed == [99])
-        #expect(fixture.selections == [99, fixture.outputs[0].id, fixture.outputs[0].id, 99])
+        #expect(fixture.selections == [99, fixture.outputs[1].id, 99])
         #expect(model.multiOutputError == nil)
     }
 
@@ -251,7 +300,8 @@ struct OutputRoutingErrorTests {
         #expect(model.startSimultaneousOutput(fixture.outputs.map(\.uid)))
         fixture.failDestroy = true
         model.stopSimultaneousOutput()
-        #expect(model.multiOutputRoute != nil)
+        #expect(model.multiOutputRoute == nil)
+        #expect(!model.outputRouting.pendingCleanup.isEmpty)
         #expect(model.multiOutputError != nil)
         model.dismissSimultaneousOutputError()
         model.refresh()
@@ -340,7 +390,7 @@ private final class RoutingHardwareFixture {
     }
 
     var hardware: MultiOutputHardware {
-        MultiOutputHardware(snapshot: { self.snapshot }, sampleRate: { _ in 48_000 },
+        MultiOutputHardware(snapshot: { self.snapshot }, selectedSystemOutputID: { self.selected }, sampleRate: { _ in 48_000 },
             isAlive: { !self.offline.contains($0) }, configuration: { _ in
                 let composition = try #require(self.composition)
                 let active = self.outputs.filter { !self.offline.contains($0.id) }.map(\.uid)
