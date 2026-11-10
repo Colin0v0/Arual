@@ -1,0 +1,36 @@
+# SwiftPM 与本地构建产物
+.build/
+dist/
+.swiftpm/
+DerivedData/
+build/
+
+# macOS 与编辑器个人配置
+.DS_Store
+._*
+.idea/
+.vscode/
+xcuserdata/
+*.xcuserstate
+
+# 本地凭据、签名材料与环境配置，不随源码上传
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# 临时日志与缓存
+*.log
+*.tmp
+*.swp
+*~
+
+# 内部开发记录保留本地；仓库文档只发布更新日志。
+/implement-stage/
+/docs/*
+!/docs/CHANGELOG.md
