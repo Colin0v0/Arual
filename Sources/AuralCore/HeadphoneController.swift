@@ -1,4 +1,5 @@
 import Combine
+import CoreAudio
 import Foundation
 
 public struct HeadphoneReadings: Equatable {
@@ -26,8 +27,11 @@ public final class HeadphoneController: ObservableObject {
     @Published public private(set) var family: HeadphoneFamily?
     @Published public private(set) var displayName = "耳机"
     @Published public private(set) var isReconnecting = false
+    @Published public private(set) var isAwaitingWear = false
+    @Published public private(set) var isRouteAuthorized = true
     public private(set) var boundOutputUID: String?
 
+    private let appleHardware: AppleHeadphoneHardware
     private let bowersWilkins = BowersWilkinsController()
     private let sony = SonyV1Client()
     private let oppo = OppoRFCOMMTransport()
@@ -45,11 +49,17 @@ public final class HeadphoneController: ObservableObject {
     private var reconnectGeneration: UInt64 = 0
     private var appleTask: Task<Void, Never>?
     private var appleGeneration: UInt64 = 0
+    private var appleNeedsRetry = false
+    /// 停止控制是按物理 UID 保存的用户意图，路由短暂变未知或 HAL ID 变化不能偷偷重新启用。
+    private var suppressedControlUIDs: Set<String> = []
     private var stopping = false
     private var suspended = false
     private var shuttingDown = false
 
-    public init() {
+    public convenience init() { self.init(appleHardware: .live) }
+
+    public init(appleHardware: AppleHeadphoneHardware) {
+        self.appleHardware = appleHardware
         // 上游 ObservableObject 在属性赋值前通知，下一轮主循环再读取整份状态。
         bowersWilkins.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in
             self?.copyBowersWilkinsState()
@@ -70,19 +80,35 @@ public final class HeadphoneController: ObservableObject {
     public func updateOutput(_ newOutput: AudioOutput?) {
         let newFamily = newOutput.flatMap(family(for:))
         let target = newFamily == nil ? nil : newOutput
-        if target?.uid != output?.uid || newFamily != family {
+        if isRouteAuthorized != (target != nil) { isRouteAuthorized = target != nil }
+        let identityChanged = target?.uid != output?.uid || newFamily != family
+        let appleHandleChanged = newFamily == .apple && target?.id != output?.id
+        if identityChanged || appleHandleChanged {
             stopClassic()
             cancelAppleOperation()
             bowersWilkins.updateOutput(nil)
             output = target
+            appleNeedsRetry = false
+            isAwaitingWear = false
             family = newFamily
             displayName = target?.name ?? "耳机"
             errorMessage = nil
             diagnosticLines = []
             classicPolicy.updateOutput(target?.uid)
             phase = .idle
+        } else {
+            // 同一副耳机的 HAL ID/名称可随通话模式变化。Apple 必须废弃旧 HAL 写任务；
+            // B&W/Sony/OPPO 的物理控制连接绑定 UID，更新音频句柄即可，不无故断开 BLE/RFCOMM。
+            output = target
+            let name = target?.name ?? "耳机"
+            if displayName != name { displayName = name }
         }
+        bowersWilkins.setRouteAuthorization(isRouteAuthorized)
         guard !suspended, !shuttingDown else { return }
+        if let target, suppressedControlUIDs.contains(target.uid) {
+            phase = .idle
+            return
+        }
         if family == .bowersWilkins {
             bowersWilkins.updateOutput(target)
             copyBowersWilkinsState()
@@ -96,8 +122,9 @@ public final class HeadphoneController: ObservableObject {
     /// 只有真实蓝牙输出才进入耳机控制；Apple 设备由 HAL 属性识别，不能依赖用户可改的名称。
     private func family(for output: AudioOutput) -> HeadphoneFamily? {
         guard output.isBluetooth else { return nil }
-        if let recognized = HeadphoneFamily.recognize(output.name) { return recognized }
-        return AppleHeadphoneHAL.isSupported(deviceID: output.id) ? .apple : nil
+        // 已确认的 HAL 能力优先于用户可编辑的名称，不能把改名为 Px7 的 AirPods 交给 BLE 驱动。
+        if appleHardware.isSupported(output.id) { return .apple }
+        return HeadphoneFamily.recognize(output.name)
     }
 
     /// 视图只查询能力，不改变当前连接状态。
@@ -106,10 +133,15 @@ public final class HeadphoneController: ObservableObject {
         return family(for: output) != nil
     }
 
-    /// HAL 聆听模式控制不持有额外连接，因此 Apple 耳机没有“断开控制通道”操作。
-    public var canDisconnect: Bool { family != .apple }
+    /// 停止控制不等于断开蓝牙音频；Apple 与其他厂商共用同一用户授权语义。
+    public var canDisconnect: Bool { family != nil }
+    public var isControlSuppressed: Bool {
+        guard let output else { return false }
+        return suppressedControlUIDs.contains(output.uid)
+    }
 
     public func outputUnavailable() {
+        updateOutput(nil)
         bowersWilkins.outputUnavailable()
         classicPolicy.observe(.unavailable)
         cancelAppleOperation()
@@ -139,16 +171,28 @@ public final class HeadphoneController: ObservableObject {
     }
 
     public func disconnect() {
+        errorMessage = nil
+        isReconnecting = false
+        if let output { suppressedControlUIDs.insert(output.uid) }
         if family == .bowersWilkins { bowersWilkins.disconnect(); copyBowersWilkinsState() }
-        else if family == .apple { return }
-        else { classicPolicy.suppress(); stopClassic(); phase = .idle }
+        else if family == .apple {
+            cancelAppleOperation()
+            state = HeadphoneReadings()
+            supportedNoiseModes = []
+            boundOutputUID = nil
+            identityVerified = false
+            errorMessage = nil
+            phase = .idle
+        } else { classicPolicy.suppress(); stopClassic(); phase = .idle }
     }
 
     public func retryAutomaticConnection(output: AudioOutput) {
-        guard !suspended, !shuttingDown else { return }
-        updateOutput(output)
+        guard !suspended, !shuttingDown,
+              self.output?.uid == output.uid, self.output?.id == output.id else { return }
+        suppressedControlUIDs.remove(output.uid)
+        // 目标已经由模型绑定；不要先触发自动连接，再重复发起一次手动连接。
         if family == .bowersWilkins { bowersWilkins.retryAutomaticConnection(output: output) }
-        else if family == .apple { refreshApple() }
+        else if family == .apple { appleNeedsRetry = false; refreshApple() }
         else {
             stopClassic()
             classicPolicy.manualAttempt()
@@ -157,7 +201,7 @@ public final class HeadphoneController: ObservableObject {
     }
 
     public func scan(output: AudioOutput) {
-        guard family == .bowersWilkins else { return }
+        guard family == .bowersWilkins, self.output?.uid == output.uid, self.output?.id == output.id else { return }
         bowersWilkins.scan(output: output)
     }
 
@@ -166,8 +210,21 @@ public final class HeadphoneController: ObservableObject {
         bowersWilkins.connect(id)
     }
 
+    private var hasAuthorizedBinding: Bool {
+        identityVerified && boundOutputUID != nil && boundOutputUID == output?.uid
+            && isRouteAuthorized && !isControlSuppressed && !suspended && !shuttingDown
+    }
+
+    /// 已验证且空闲的物理控制连接不必因音频路由过渡被拆掉；过渡期间只保留连接，不允许发命令。
+    public func pauseRouteAuthorization() -> Bool {
+        guard phase == .ready, !busy, identityVerified, !suspended, !shuttingDown else { return false }
+        if isRouteAuthorized { isRouteAuthorized = false }
+        bowersWilkins.setRouteAuthorization(false)
+        return true
+    }
+
     public func refresh() {
-        guard phase == .ready, !busy else { return }
+        guard phase == .ready, !busy, hasAuthorizedBinding else { return }
         errorMessage = nil
         switch family {
         case .bowersWilkins: bowersWilkins.refresh()
@@ -179,7 +236,8 @@ public final class HeadphoneController: ObservableObject {
     }
 
     public func setNoiseMode(_ mode: NoiseMode) {
-        guard phase == .ready, !busy, supportedNoiseModes.contains(mode), state.noiseMode != mode else { return }
+        guard phase == .ready, !busy, hasAuthorizedBinding,
+              supportedNoiseModes.contains(mode), state.noiseMode != mode else { return }
         if family == .bowersWilkins { bowersWilkins.setNoiseMode(mode); return }
         pendingNoiseMode = mode
         noiseReadback.begin(mode)
@@ -210,6 +268,7 @@ public final class HeadphoneController: ObservableObject {
             noiseReadback.didSendVerification()
         case .apple:
             writeAppleNoiseMode(mode)
+            return
         default: return
         }
         guard phase == .ready, pendingNoiseMode != nil else { return }
@@ -218,6 +277,29 @@ public final class HeadphoneController: ObservableObject {
 
     private func copyBowersWilkinsState() {
         guard family == .bowersWilkins else { return }
+        if isControlSuppressed {
+            errorMessage = nil
+            isReconnecting = false
+            candidates = []
+            state = HeadphoneReadings()
+            supportedNoiseModes = []
+            boundOutputUID = nil
+            identityVerified = false
+            pendingNoiseMode = nil
+            busy = false
+            phase = bowersWilkins.phase == .disconnecting ? .disconnecting : .idle
+            return
+        }
+        if let bound = bowersWilkins.boundOutputUID, bound != output?.uid {
+            // 旧 BLE 连接的取消确认可能稍晚返回，不能把旧耳机读数挂到新目标名称下。
+            state = HeadphoneReadings()
+            supportedNoiseModes = []
+            boundOutputUID = nil
+            identityVerified = false
+            pendingNoiseMode = nil
+            phase = .disconnecting
+            return
+        }
         phase = bowersWilkins.phase
         state = HeadphoneReadings(battery: bowersWilkins.state.battery, noiseMode: bowersWilkins.state.noiseMode)
         candidates = bowersWilkins.candidates
@@ -233,10 +315,14 @@ public final class HeadphoneController: ObservableObject {
 
     /// Apple 耳机每次刷新都直接读取 HAL；没有建立或维护另一条蓝牙控制连接。
     private func refreshApple() {
-        guard !suspended, !shuttingDown, !busy, let output, family == .apple else { return }
+        guard !suspended, !shuttingDown, !busy, !appleNeedsRetry,
+              let output, family == .apple else { return }
         do {
-            let snapshot = try AppleHeadphoneHAL.snapshot(on: output.id)
+            try appleHardware.validateTarget(output)
+            let snapshot = try appleHardware.snapshot(output.id)
             guard self.output?.uid == output.uid, family == .apple, !stopping else { return }
+            if snapshot.isWorn == false { pauseAppleUntilWorn(); return }
+            isAwaitingWear = false
             state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
             supportedNoiseModes = snapshot.supportedNoiseModes
             boundOutputUID = output.uid
@@ -255,36 +341,73 @@ public final class HeadphoneController: ObservableObject {
             return
         }
         let generation = appleGeneration
-        let deviceID = output.id
-        let outputUID = output.uid
         appleTask?.cancel()
-        appleTask = Task { [weak self] in
-            let operation = Task.detached(priority: .userInitiated) {
-                try AppleHeadphoneHAL.setNoiseMode(mode, on: deviceID)
-            }
+        appleTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                let snapshot = try await operation.value
-                guard let self, !Task.isCancelled, self.appleGeneration == generation,
-                      self.output?.uid == outputUID, self.family == .apple else { return }
-                self.cancelDeadline()
-                self.state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
-                self.supportedNoiseModes = snapshot.supportedNoiseModes
-                self.pendingNoiseMode = nil
-                self.noiseReadback.clear()
-                self.busy = false
-                self.errorMessage = nil
-                self.phase = .ready
-                self.appleTask = nil
-                self.trace("APPLE HAL SET \(mode.rawValue)")
+                try self.checkAppleAuthorization(output: output, generation: generation)
+                try self.appleHardware.requestMode(mode, output)
+                for _ in 0..<16 {
+                    try await self.appleHardware.waitForReadback()
+                    try self.checkAppleAuthorization(output: output, generation: generation)
+                    let snapshot = try self.appleHardware.snapshot(output.id)
+                    if snapshot.isWorn == false { self.pauseAppleUntilWorn(); return }
+                    guard snapshot.noiseMode == mode else { continue }
+                    self.cancelDeadline()
+                    self.state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
+                    self.supportedNoiseModes = snapshot.supportedNoiseModes
+                    self.pendingNoiseMode = nil
+                    self.noiseReadback.clear()
+                    self.busy = false
+                    self.errorMessage = nil
+                    self.phase = .ready
+                    self.appleTask = nil
+                    self.trace("APPLE HAL SET \(mode.rawValue)")
+                    return
+                }
+                throw AudioFailure("Apple 耳机没有确认聆听模式切换")
             } catch {
-                guard let self, !Task.isCancelled, self.appleGeneration == generation,
-                      self.output?.uid == outputUID, self.family == .apple else { return }
+                // 旧目标或被取消的任务不能发布新状态，更不能覆盖另一副耳机的读数。
+                guard !Task.isCancelled, self.appleGeneration == generation,
+                      self.output?.uid == output.uid, self.output?.id == output.id,
+                      self.family == .apple else { return }
+                if error is AppleHeadphoneNotWorn {
+                    self.pauseAppleUntilWorn()
+                    return
+                }
+                if let failure = error as? AudioFailure, failure.status == kAudioHardwareIllegalOperationError {
+                    // nope 只表示本次 SET 被拒绝。只读回当前事实，不重发，也不摧毁仍可读取的控制连接。
+                    do {
+                        try self.checkAppleAuthorization(output: output, generation: generation)
+                        let snapshot = try self.appleHardware.snapshot(output.id)
+                        if snapshot.isWorn == false { self.pauseAppleUntilWorn(); return }
+                        self.cancelAppleOperation()
+                        self.state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
+                        self.supportedNoiseModes = snapshot.supportedNoiseModes
+                        self.isAwaitingWear = false
+                        self.phase = .ready
+                        self.errorMessage = "Apple 耳机拒绝了本次模式切换，当前模式已重新读取；请确认佩戴状态后再操作"
+                        return
+                    } catch {
+                        self.failApple("模式写入被拒绝，且无法确认当前状态：\(error.localizedDescription)")
+                        return
+                    }
+                }
                 self.failApple(error.localizedDescription)
             }
         }
     }
 
+    private func checkAppleAuthorization(output: AudioOutput, generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard appleGeneration == generation, self.output?.uid == output.uid,
+              self.output?.id == output.id, family == .apple,
+              isRouteAuthorized, !suspended, !shuttingDown, !stopping else { throw CancellationError() }
+        try appleHardware.validateTarget(output)
+    }
+
     private func failApple(_ message: String) {
+        appleNeedsRetry = true
         cancelAppleOperation()
         state = HeadphoneReadings()
         supportedNoiseModes = []
@@ -292,6 +415,19 @@ public final class HeadphoneController: ObservableObject {
         identityVerified = false
         errorMessage = message
         phase = .failed(message)
+    }
+
+    /// 等佩戴证据恢复后仅刷新 GET；绝不自动重放用户之前被拒绝的模式写入。
+    private func pauseAppleUntilWorn() {
+        cancelAppleOperation()
+        appleNeedsRetry = false
+        isAwaitingWear = true
+        state = HeadphoneReadings()
+        supportedNoiseModes = []
+        boundOutputUID = nil
+        identityVerified = false
+        errorMessage = nil
+        phase = .idle
     }
 
     private func cancelAppleOperation() {

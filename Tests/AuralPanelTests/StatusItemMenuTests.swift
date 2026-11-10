@@ -51,26 +51,56 @@ struct StatusItemMenuTests {
         // 不论当前外观如何，都不在菜单上写入覆盖值；原生状态栏负责选择实际外观。
         for name in [NSAppearance.Name.aqua, .darkAqua] {
             application.appearance = NSAppearance(named: name)
-            let menu = StatusItemMenu.make(openPanel: {}, openSettings: {}, quit: {})
+            let menu = StatusItemMenu.make(openPanel: {}, openSettings: {}, showBattery: false,
+                                           toggleBattery: {}, quit: {})
             #expect(menu.appearance == nil)
         }
     }
 
-    @Test @MainActor func menuContainsOnlyOpenSettingsAndQuit() throws {
+    @Test @MainActor func menuContainsBatteryToggleAndPrimaryActions() throws {
         var actions: [String] = []
         let menu = StatusItemMenu.make(openPanel: { actions.append("open") },
-                                       openSettings: { actions.append("settings") }, quit: { actions.append("quit") })
+                                       openSettings: { actions.append("settings") },
+                                       showBattery: true,
+                                       toggleBattery: { actions.append("battery") },
+                                       quit: { actions.append("quit") },
+                                       version: "0.1.10")
         #expect(!menu.autoenablesItems)
-        #expect(menu.items.map(\.title) == ["打开 Aural", "设置…", "退出 Aural"])
+        #expect(menu.items.map(\.title) == ["打开 Aural", "显示当前设备剩余电量", "版本 0.1.10",
+                                           "设置…", "退出 Aural"])
         #expect(!menu.items.contains(where: { $0.isSeparatorItem }))
         #expect(menu.item(withTitle: "测试耳机") == nil)
+        #expect(menu.item(withTitle: "显示当前设备剩余电量")?.state == .on)
+        #expect(menu.item(withTitle: "版本 0.1.10")?.isEnabled == false)
         #expect(actions.isEmpty)
-        for title in ["打开 Aural", "设置…", "退出 Aural"] {
+        for title in ["打开 Aural", "显示当前设备剩余电量", "设置…", "退出 Aural"] {
             let item = try #require(menu.item(withTitle: title))
             #expect(item.isEnabled)
             let action = try #require(item.action)
             #expect(NSApplication.shared.sendAction(action, to: item.target, from: item))
         }
-        #expect(actions == ["open", "settings", "quit"])
+        #expect(actions == ["open", "battery", "settings", "quit"])
+    }
+
+    @Test @MainActor func readyUpdateAddsRestartActionToStatusMenu() throws {
+        var restarted = false
+        let menu = StatusItemMenu.make(openPanel: {}, openSettings: {}, showBattery: false,
+                                       toggleBattery: {}, quit: {},
+                                       version: "0.1.10",
+                                       restartVersion: "0.1.11",
+                                       restartUpdate: { restarted = true })
+        let item = try #require(menu.item(withTitle: "重启以更新到 0.1.11"))
+        let action = try #require(item.action)
+        #expect(NSApplication.shared.sendAction(action, to: item.target, from: item))
+        #expect(restarted)
+    }
+
+    @Test func batteryTextOnlyUsesARealPercentageWhenEnabled() {
+        #expect(StatusItemBatteryText.title(enabled: false, percent: 87).isEmpty)
+        #expect(StatusItemBatteryText.title(enabled: true, percent: nil).isEmpty)
+        #expect(StatusItemBatteryText.title(enabled: true, percent: -1).isEmpty)
+        #expect(StatusItemBatteryText.title(enabled: true, percent: 101).isEmpty)
+        #expect(StatusItemBatteryText.title(enabled: true, percent: 0) == "0%")
+        #expect(StatusItemBatteryText.title(enabled: true, percent: 87) == "87%")
     }
 }

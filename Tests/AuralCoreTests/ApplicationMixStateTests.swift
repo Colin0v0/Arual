@@ -65,16 +65,53 @@ struct ApplicationMixStateTests {
 }
 
 struct MixLifecycleSafetyTests {
-    @Test func outputChangeIsLatchedEvenIfItChangesBack() {
+    @Test func externalOutputFailureRequiresExplicitReapplication() {
         var state = ApplicationMixState()
         state.enable(outputUID: "X")
-        let changed = state.pauseIfOutputChanged(currentUID: "Y")
-        #expect(changed)
-        let back = state.pauseIfOutputChanged(currentUID: "X")
-        #expect(!back)
-        #expect(state.failure != nil)
+        state.markOutputChanged()
+        #expect(state.boundOutputUID == "X")
+        #expect(state.failureReason == .outputChanged)
         let group = AudioProcessGroup(id: "test", bundleID: "test", processIDs: [10], objectIDs: [100])
         #expect(state.action(group: group, sessionObjectIDs: nil) == .inactive)
+    }
+
+    @Test func confirmedRouteRebindPreservesGainAndMuteAcrossModeChanges() throws {
+        var state = ApplicationMixState()
+        try state.setGain(0.25)
+        state.toggleMute()
+        state.enable(outputUID: "X")
+        state.rebind(outputUID: "local.aural.multi.confirmed")
+        #expect(state.failure == nil)
+        #expect(state.boundOutputUID == "local.aural.multi.confirmed")
+        state.rebind(outputUID: "Y")
+        #expect(state.boundOutputUID == "Y")
+        #expect(state.gain == 0.25 && state.muted)
+        let group = AudioProcessGroup(id: "test", bundleID: "test", processIDs: [10], objectIDs: [100])
+        #expect(state.action(group: group, sessionObjectIDs: nil) == .start)
+    }
+
+    @Test func explicitRebindClearsOnlyTheOutputChangeFailure() {
+        var state = ApplicationMixState()
+        state.enable(outputUID: "aggregate")
+        state.markOutputChanged()
+        #expect(state.failureReason == .outputChanged)
+
+        // 用户在 Aural 里缩成单设备是一个明确的路由操作，绑定必须跟随新输出，
+        // 否则下一次刷新会把这次主动切换报告成外部输出变化。
+        state.rebind(outputUID: "real-device")
+        #expect(state.boundOutputUID == "real-device")
+        #expect(state.failureReason == nil)
+        let group = AudioProcessGroup(id: "test", bundleID: "test", processIDs: [10], objectIDs: [100])
+        #expect(state.action(group: group, sessionObjectIDs: nil) == .start)
+    }
+
+    @Test func explicitRebindDoesNotHideARealSessionFailure() {
+        var state = ApplicationMixState()
+        state.enable(outputUID: "aggregate")
+        state.fail("permission denied")
+        state.rebind(outputUID: "real-device")
+        #expect(state.boundOutputUID == "real-device")
+        #expect(state.failureReason == .other("permission denied"))
     }
 
     @Test func ownershipDoesNotDependOnTheApplicationRowID() {

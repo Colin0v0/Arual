@@ -15,6 +15,12 @@ struct PanelMetricsTests {
         #expect(PanelMetrics.size(contentHeight: 1_000).height == 674)
     }
 
+    @Test func screenBudgetLetsLongContentGrowBeyondTheOldCap() {
+        #expect(PanelMetrics.size(contentHeight: 700, maximumHeight: 900).height == 814)
+        #expect(PanelMetrics.size(contentHeight: 1_000, maximumHeight: 900).height == 900)
+        #expect(PanelMetrics.size(contentHeight: 100, maximumHeight: 280).height == 280)
+    }
+
     @Test func contentCanShrinkBackWithoutChangingChrome() {
         for height: CGFloat in [0, 120, 220, 560, 1_000, 120] {
             let viewport = PanelMetrics.viewportHeight(contentHeight: height)

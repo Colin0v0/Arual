@@ -1,6 +1,13 @@
 import CoreAudio
 import Foundation
 
+/// 某次真实 HAL 校验已经确认成员不可用，必须携带该次证据，不能立即重读并把抖动误当恢复。
+public struct MultiOutputMembersUnavailable: LocalizedError {
+    public let memberUIDs: [String]
+    public init(_ memberUIDs: [String]) { self.memberUIDs = memberUIDs }
+    public var errorDescription: String? { "部分已选设备的音频通道暂不可用" }
+}
+
 /// 系统多输出由 HAL 镜像音频，不创建 Process Tap，也不接管或重放各应用的样本。
 public struct MultiOutputPlan {
     public let outputs: [AudioOutput]
@@ -34,7 +41,8 @@ public struct MultiOutputPlan {
         let orderedOutputs = [outputs.first { $0.uid == mainOutputUID }!]
             + outputs.filter { $0.uid != mainOutputUID }
         return [
-            kAudioAggregateDeviceNameKey: "Aural 同时输出",
+            // 这个名称会进入 macOS 输出设备列表，必须直接说明它来自 Aural。
+            kAudioAggregateDeviceNameKey: "Aural 多设备输出",
             kAudioAggregateDeviceUIDKey: uid,
             kAudioAggregateDeviceIsPrivateKey: 0,
             // 与系统“多输出设备”一致；该模式才会让群组中的设备同时播放。
@@ -94,13 +102,18 @@ public struct MultiOutputConfiguration {
               mirrorsOutputs, mainOutputUID == expectedMain else {
             throw AudioFailure("系统未确认镜像输出或时钟配置，请重新启动同时输出")
         }
-        guard outputUIDs.count == outputs.count, Set(outputUIDs) == expected,
-              activeOutputUIDs.count == outputs.count, Set(activeOutputUIDs) == expected else {
+        guard outputUIDs.count == outputs.count, Set(outputUIDs) == expected else {
             throw AudioFailure("系统多输出未启用全部所选设备，请重新连接后再试")
         }
         guard driftCompensatedUIDs == Set(outputs.filter { $0.uid != expectedMain }.map(\.uid)) else {
             throw AudioFailure("系统未启用从设备的时钟漂移补偿，请重新启动同时输出")
         }
+        let active = Set(activeOutputUIDs)
+        guard active.count == activeOutputUIDs.count, active.isSubset(of: expected) else {
+            throw AudioFailure("系统多输出的活动成员配置异常")
+        }
+        let missing = outputs.filter { !active.contains($0.uid) }.map(\.uid)
+        if !missing.isEmpty { throw MultiOutputMembersUnavailable(missing) }
     }
 }
 
@@ -133,6 +146,11 @@ public struct MultiOutputRoute: Equatable {
 @MainActor
 public struct MultiOutputHardware {
     public var snapshot: () throws -> SystemAudioSnapshot
+    public var selectedSystemOutputID: () throws -> AudioDeviceID
+    /// 只用于识别真实播放通道；默认输出被抢占但声音仍留在旧路由时不能误拆会话。
+    public var activePlaybackDeviceIDs: () throws -> [AudioDeviceID] = { [] }
+    /// 只使用设备公开的佩戴证据；未知不等于离线，非 Apple 设备不进入入耳检测。
+    public var isWorn: (AudioDeviceID) throws -> Bool? = { _ in nil }
     public var sampleRate: (AudioDeviceID) throws -> Double
     public var isAlive: (AudioDeviceID) throws -> Bool
     public var configuration: (AudioDeviceID) throws -> MultiOutputConfiguration
@@ -141,7 +159,9 @@ public struct MultiOutputHardware {
     public var destroy: (AudioDeviceID) throws -> Void
 
     public static var live: Self {
-        Self(snapshot: SystemAudio.snapshot, sampleRate: {
+        Self(snapshot: SystemAudio.snapshot, selectedSystemOutputID: SystemAudio.selectedSystemOutputID,
+             activePlaybackDeviceIDs: AudioProcesses.activeOutputDeviceIDs,
+             isWorn: AppleHeadphoneHAL.isWorn, sampleRate: {
             try HAL.read($0, HAL.address(kAudioDevicePropertyNominalSampleRate), initial: Double(0))
         }, isAlive: {
             try HAL.read($0, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: UInt32(0)) != 0
@@ -157,11 +177,19 @@ public struct MultiOutputHardware {
             )
             return try MultiOutputConfiguration(composition: dictionary, activeOutputUIDs: uids)
         }, create: { description in
+            let interval = AudioSwitchTrace.begin("CreateAggregate")
+            defer { AudioSwitchTrace.end("CreateAggregate", interval) }
             var id: AudioDeviceID = 0
             try HAL.check(AudioHardwareCreateAggregateDevice(description as CFDictionary, &id), "创建同时输出设备")
             return id
-        }, select: SystemAudio.select, destroy: {
-            try HAL.check(AudioHardwareDestroyAggregateDevice($0), "释放同时输出设备")
+        }, select: { deviceID in
+            let interval = AudioSwitchTrace.begin("SetDefaultOutput")
+            defer { AudioSwitchTrace.end("SetDefaultOutput", interval) }
+            try SystemAudio.requestSelection(deviceID)
+        }, destroy: { deviceID in
+            let interval = AudioSwitchTrace.begin("DestroyAggregate")
+            defer { AudioSwitchTrace.end("DestroyAggregate", interval) }
+            try HAL.check(AudioHardwareDestroyAggregateDevice(deviceID), "释放同时输出设备")
         })
     }
 }
@@ -182,165 +210,160 @@ func readActiveOutputUIDs(readActiveIDs: () throws -> [AudioObjectID],
     throw AudioFailure("无法读取同时输出的活动成员")
 }
 
+/// 只拥有聚合资源，不决定系统默认输出；选择、确认、外部变化都由唯一协调器管理。
 @MainActor
 public final class MultiOutputDevice {
     public private(set) var route: MultiOutputRoute?
     public private(set) var requiresCleanup = false
+    /// 本次操作首次发现、尚未成功确认消失的非自有资源；读取失败不能把它们当成已释放。
+    public private(set) var unresolvedUnmanagedOutputs: [AudioOutput] = []
     private let hardware: MultiOutputHardware
+    private var destroyRequests: Set<String> = []
+    public var hasPendingRelease: Bool { !destroyRequests.isEmpty }
+
+    /// 只有新的明确操作才允许再次请求销毁；等待 HAL 移除期间绝不重复发 destroy。
+    public func beginExplicitChange() { destroyRequests.removeAll() }
 
     public init(hardware: MultiOutputHardware) { self.hardware = hardware }
 
-    /// 重启后不会伪造上一轮的路由或原输出；未被本实例持有的设备单独列为待清理。
     public func unmanagedOutputs(in snapshot: SystemAudioSnapshot) -> [AudioOutput] {
         snapshot.outputs.filter { $0.isAuralMultiOutput && $0.uid != route?.uid }
     }
 
-    /// 只在用户明确选择单设备或点击清理后调用。仍被系统选中的设备不能直接删除。
-    public func cleanupUnmanagedOutputs() throws {
-        let snapshot = try hardware.snapshot()
-        let unmanaged = unmanagedOutputs(in: snapshot)
-        guard !unmanaged.contains(where: { $0.id == snapshot.selectedID }) else {
-            throw AudioFailure("上次的同时输出设备仍被系统选中，请先选择一台真实输出设备")
+    /// 每次成功读到完整枚举就登记发现事实；只有成功枚举才能确认旧记录已经消失。
+    public func recordUnmanagedOutputs(in snapshot: SystemAudioSnapshot) {
+        if let owned = route, destroyRequests.contains(owned.uid),
+           !snapshot.outputs.contains(where: { $0.uid == owned.uid }) {
+            // 只确认本实例已经请求过销毁的资源消失；不把刚创建尚未注册的设备当作已释放。
+            route = nil
+            requiresCleanup = false
         }
-        for output in unmanaged {
-            // 每次释放前重读身份与默认输出，不能用旧 ID 误删重连设备或正在使用的输出。
-            let fresh = try hardware.snapshot()
-            guard let current = fresh.outputs.first(where: { $0.uid == output.uid }) else { continue }
-            guard current.id == output.id, current.isAuralMultiOutput,
-                  current.uid != route?.uid, fresh.selectedID != current.id else {
-                throw AudioFailure("待清理设备的状态已改变，请重新选择输出后再清理")
-            }
-            try hardware.destroy(current.id)
-        }
+        unresolvedUnmanagedOutputs = unmanagedOutputs(in: snapshot)
+        // 完整枚举已确认消失的 UID 不再占用等待计时，不把旧销毁请求永久留在轮询里。
+        destroyRequests.formIntersection(Set(snapshot.outputs.map(\.uid)))
     }
 
-    public func start(outputUIDs: [String]) throws {
-        guard route == nil else { throw AudioFailure("请先结束当前同时输出") }
+    /// 资源层的完整枚举统一经过这里，包含销毁后的确认读取，避免遗漏刚发现的其他残留。
+    private func readSnapshot() throws -> SystemAudioSnapshot {
         let snapshot = try hardware.snapshot()
-        guard unmanagedOutputs(in: snapshot).isEmpty else {
-            throw AudioFailure("请先选择一台扬声器，再重新设置同时输出")
+        recordUnmanagedOutputs(in: snapshot)
+        return snapshot
+    }
+
+    @discardableResult
+    public func cleanupUnmanagedOutputs() throws -> Bool {
+        _ = try readSnapshot()
+        for output in unresolvedUnmanagedOutputs {
+            let fresh = try readSnapshot()
+            guard let current = fresh.outputs.first(where: { $0.uid == output.uid }) else {
+                destroyRequests.remove(output.uid)
+                unresolvedUnmanagedOutputs.removeAll { $0.uid == output.uid }
+                continue
+            }
+            guard current.id == output.id, current.isAuralMultiOutput,
+                  fresh.selectedID != current.id, try hardware.selectedSystemOutputID() != current.id else {
+                throw AudioFailure("残留组合仍被系统使用，请明确选择真实输出后再释放")
+            }
+            if !destroyRequests.contains(current.uid) {
+                try hardware.destroy(current.id)
+                destroyRequests.insert(current.uid)
+            }
+            if try readSnapshot().outputs.contains(where: { $0.uid == current.uid }) { return false }
+            destroyRequests.remove(current.uid)
+            unresolvedUnmanagedOutputs.removeAll { $0.uid == current.uid }
         }
+        return true
+    }
+
+    /// 创建与校验不改变默认输出。创建后的任何失败都保留句柄，绝不隐式恢复另一条路由。
+    public func prepare(outputUIDs: [String]) throws {
+        guard route == nil else { throw AudioFailure("旧组合尚未释放") }
+        let snapshot = try readSnapshot()
+        guard unmanagedOutputs(in: snapshot).isEmpty else { throw AudioFailure("请先释放残留组合设备") }
         guard let previous = snapshot.outputs.first(where: { $0.id == snapshot.selectedID }) else {
-            throw AudioFailure("无法确认原输出设备，未启动同时输出")
+            throw AudioFailure("无法确认当前系统输出")
         }
         let outputs = try outputUIDs.map { uid in
-            guard let output = snapshot.outputs.first(where: { $0.uid == uid }), try hardware.isAlive(output.id) else {
-                throw AudioFailure("所选设备已断开，请重新选择")
-            }
+            guard let output = snapshot.outputs.first(where: { $0.uid == uid }),
+                  try hardware.isAlive(output.id) else { throw AudioFailure("所选设备已断开，请重新选择") }
             return output
         }
+        guard outputs.count > 1 else { throw AudioFailure("单成员模式应直接使用真实设备") }
         var rates: [String: Double] = [:]
         for output in outputs { rates[output.uid] = try hardware.sampleRate(output.id) }
         let plan = try MultiOutputPlan(outputs: outputs, sampleRates: rates)
         let uid = "local.aural.multi.\(UUID().uuidString)"
         let id = try hardware.create(plan.description(uid: uid))
-        // 外部聚合设备不能作为“原输出”恢复，否则结束同时输出后会重新落回多设备输出。
-        let previousOutputUID = previous.isAggregate ? outputs[0].uid : previous.uid
-        // 创建后立即保留句柄。后续选择或清理失败时不能丢失仍需释放的设备。
         route = MultiOutputRoute(deviceID: id, uid: uid, outputs: outputs, mainOutputUID: plan.mainOutputUID,
-                                 previousOutputUID: previousOutputUID, sampleRate: plan.sampleRate)
-        do {
-            // 校验新组合实际采用的采样率；不偷偷改硬件设置来凑齐格式。
-            guard try hardware.sampleRate(id) == plan.sampleRate else {
-                throw AudioFailure("系统多输出设备未采用所选采样率，未切换输出")
-            }
-            // 不把“创建成功”误报成“两台均已启用”，也不尝试改用另一种音频后端。
-            try hardware.configuration(id).validate(outputs: outputs)
-            try hardware.select(id)
-        }
-        catch {
-            let failure = error.localizedDescription
-            do { try stop() }
-            catch { throw AudioFailure("\(failure)；清理同时输出失败：\(error.localizedDescription)") }
-            throw AudioFailure(failure)
-        }
+                                 previousOutputUID: previous.uid, sampleRate: plan.sampleRate)
+        do { try validate(snapshot: readSnapshot()) }
+        catch { requiresCleanup = true; throw error }
     }
 
-    /// 明确结束时恢复原输出；用户点选普通设备时使用其明确选择，而非猜测另一台设备。
-    public func stop(selecting outputUID: String? = nil) throws {
-        guard let route else { return }
-        var aggregateAbsenceConfirmed = false
+    /// 只能释放已经离开媒体和提示音默认输出的聚合；不在释放函数里擅自切换设备。
+    @discardableResult
+    public func release() throws -> Bool {
+        guard let route else { return true }
         do {
-            let snapshot = try hardware.snapshot()
-            var target: AudioOutput?
-            if outputUID != nil || snapshot.selectedID == route.deviceID {
-                let targetUID = outputUID ?? route.previousOutputUID
-                guard let selectedTarget = snapshot.outputs.first(where: { $0.uid == targetUID }),
-                      selectedTarget.id != route.deviceID, try hardware.isAlive(selectedTarget.id) else {
-                    throw AudioFailure("原输出或所选设备已断开，请选择可用输出设备后结束同时输出")
+            let snapshot = try readSnapshot()
+            if let current = snapshot.outputs.first(where: { $0.uid == route.uid }) {
+                guard current.id == route.deviceID, snapshot.selectedID != current.id,
+                      try hardware.selectedSystemOutputID() != current.id else {
+                    throw AudioFailure("组合仍是系统输出，尚未释放")
                 }
-                target = selectedTarget
-                // 先离开聚合设备，系统才允许释放当前默认输出。
-                try hardware.select(selectedTarget.id)
+                if !destroyRequests.contains(route.uid) {
+                    try hardware.destroy(route.deviceID)
+                    destroyRequests.insert(route.uid)
+                }
             }
-            try hardware.destroy(route.deviceID)
-            // destroy 返回成功不等于 HAL 已移除设备；必须从新的枚举结果确认 UID 消失。
-            let afterDestroy = try hardware.snapshot()
-            aggregateAbsenceConfirmed = !afterDestroy.outputs.contains { $0.uid == route.uid }
-            guard aggregateAbsenceConfirmed else {
-                throw AudioFailure("系统未确认释放同时输出设备，请重试释放")
-            }
-            // 某些 macOS 版本会在销毁聚合设备后重新把默认输出切回蓝牙设备；释放完成后再确认一次目标。
+            // Destroy 返回后 HAL 枚举可能暂时仍包含该 UID；这是等待确认，不是立即失败。
+            if try readSnapshot().outputs.contains(where: { $0.uid == route.uid }) { return false }
+            destroyRequests.remove(route.uid)
             self.route = nil
             requiresCleanup = false
-            if let target {
-                try hardware.select(target.id)
-                let verified = try hardware.snapshot()
-                guard verified.selectedID == target.id else {
-                    throw AudioFailure("系统未确认切换回所选输出，请重新选择设备")
-                }
-            }
+            return true
         } catch {
-            // 聚合设备已经释放后发生的目标切换失败不能再被误报成“仍需释放聚合设备”。
-            requiresCleanup = !aggregateAbsenceConfirmed
+            // 枚举尚未收敛不是资源释放失败；保留销毁请求，下一次观察只确认移除，不重复销毁。
+            if !(error is AudioSnapshotPending) { requiresCleanup = true }
             throw error
         }
     }
 
-    @discardableResult
-    public func reconcile(snapshot: SystemAudioSnapshot) throws -> Bool {
-        guard let route, !requiresCleanup else { return false }
-        // 成员状态与系统默认输出是并列事实，先记录断连，避免系统同时切走时吞掉错误。
-        var memberFailure: Error?
-        do {
-            try validateMembers(route, snapshot: snapshot)
-            try hardware.configuration(route.deviceID).validate(outputs: route.outputs)
-        }
-        catch { memberFailure = error }
-        if snapshot.selectedID != route.deviceID {
-            let selectedOutput = snapshot.outputs.first { $0.id == snapshot.selectedID }
-            if memberFailure == nil, selectedOutput?.isBluetooth == true {
-                // macOS 会在蓝牙耳机连接时自动切换默认输出；同时输出仍有效时恢复聚合设备，
-                // 不能让新连接或重连的蓝牙设备直接拆掉用户正在使用的整条路由。
-                try hardware.select(route.deviceID)
-                return true
-            }
-            // 切到无关设备仍视为用户明确选择，只释放本进程设备，不覆盖那次选择。
-            try stop()
-            if let memberFailure { throw memberFailure }
-            return false
-        }
-        if let memberFailure { throw memberFailure }
-        return false
-    }
-
-    private func validateMembers(_ route: MultiOutputRoute, snapshot: SystemAudioSnapshot) throws {
-        guard try hardware.sampleRate(route.deviceID) == route.sampleRate else {
-            throw AudioFailure("同时输出设备的采样率已改变，请重新配置同时输出")
+    public func validate(snapshot: SystemAudioSnapshot) throws {
+        guard let route, !requiresCleanup else { throw AudioFailure("组合资源尚未就绪或待释放") }
+        guard snapshot.outputs.contains(where: { $0.id == route.deviceID && $0.uid == route.uid }),
+              try hardware.sampleRate(route.deviceID) == route.sampleRate else {
+            throw AudioFailure("组合设备或主时钟已改变，请重新配置")
         }
         for member in route.outputs {
-            guard let current = snapshot.outputs.first(where: { $0.uid == member.uid }),
-                  current.id == member.id, try hardware.isAlive(current.id) else {
-                throw AudioFailure("同时输出中的“\(member.name)”已断开，请重新选择设备")
+            guard snapshot.outputs.contains(where: { $0.uid == member.uid && $0.id == member.id }),
+                  try hardware.isAlive(member.id) else {
+                throw MultiOutputMembersUnavailable([member.uid])
             }
-            let memberRate = try hardware.sampleRate(current.id)
-            guard memberRate.isFinite, memberRate > 0 else {
-                throw AudioFailure("无法读取“\(member.name)”的采样率，请重新连接后再试")
-            }
-            // 只有主设备必须与聚合设备保持同一采样率；其他成员可由 HAL 重采样。
-            if member.uid == route.mainOutputUID, memberRate != route.sampleRate {
-                throw AudioFailure("“\(member.name)”的主时钟采样率已改变，请重新配置同时输出")
+            let rate = try hardware.sampleRate(member.id)
+            guard rate.isFinite, rate > 0,
+                  member.uid != route.mainOutputUID || rate == route.sampleRate else {
+                throw AudioFailure("同时输出成员的时钟无效，请重新配置")
             }
         }
+        try hardware.configuration(route.deviceID).validate(outputs: route.outputs)
+    }
+
+    /// 蓝牙重连会换 AudioDeviceID，但聚合和成员的 UID 不变。
+    /// 只有全部成员都仍在枚举中时才刷新句柄；成员短暂消失时保留旧记录，交由 validate 的等待期限处理。
+    @discardableResult
+    public func refreshHandles(snapshot: SystemAudioSnapshot) -> Bool {
+        guard let route else { return true }
+        guard let aggregate = snapshot.outputs.first(where: { $0.uid == route.uid }) else { return false }
+        var members: [AudioOutput] = []
+        for member in route.outputs {
+            guard let current = snapshot.outputs.first(where: { $0.uid == member.uid }) else { return false }
+            members.append(current)
+        }
+        self.route = MultiOutputRoute(deviceID: aggregate.id, uid: route.uid,
+                                      outputs: members, mainOutputUID: route.mainOutputUID,
+                                      previousOutputUID: route.previousOutputUID,
+                                      sampleRate: route.sampleRate)
+        return true
     }
 }

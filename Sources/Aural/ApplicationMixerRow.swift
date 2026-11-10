@@ -5,7 +5,8 @@ import AuralCore
 struct ApplicationMixerRow: View {
     let app: ApplicationAudioRow
     let state: ApplicationMixState
-    let level: Float?
+    let levelSource: ApplicationLevelSource
+    let metersVisible: Bool
     let awaitingStream: Bool
     let status: String
     let toggleMute: () -> Void
@@ -18,10 +19,15 @@ struct ApplicationMixerRow: View {
     var body: some View {
         // 全部控件保持一排，真实错误放入同行标记、悬停和菜单，不再额外撑出第二行。
         HStack(spacing: 8) {
-            ApplicationLevelMeter(level: level, applicationName: app.label)
+            if metersVisible {
+                LiveApplicationLevelMeter(source: levelSource, applicationName: app.label)
+            } else {
+                // 非当前分区不订阅 30Hz 电平；切回该页时再恢复实时观察。
+                ApplicationLevelMeter(level: nil, applicationName: app.label)
+            }
             Group {
                 if let url = app.applicationURL {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable()
+                    Image(nsImage: ApplicationIconCache.icon(for: url)).resizable()
                 } else {
                     Image(systemName: "waveform").foregroundStyle(PanelStyle.secondary)
                 }
@@ -73,5 +79,23 @@ struct ApplicationMixerRow: View {
             Button(L10n.text("应用配置", language: language), action: applyConfiguration)
         }
         if state.managed { Button(L10n.text("停止管理", language: language), action: stopManaging) }
+    }
+}
+
+/// 应用图标在多次轮询和页面切换间复用，避免每帧都向 Launch Services 查询。
+@MainActor
+private enum ApplicationIconCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        return cache
+    }()
+
+    static func icon(for url: URL) -> NSImage {
+        let key = url.path as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        cache.setObject(icon, forKey: key)
+        return icon
     }
 }

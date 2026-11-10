@@ -18,6 +18,16 @@ public struct ApplicationAudioRow: Identifiable, Equatable, Codable {
     public let applicationURL: URL?
     public let group: AudioProcessGroup?
     public let isRunningOutput: Bool
+    /// 展示元数据与当前流分开传递；暂时没有流的应用仍可保留稳定的行身份。
+    public init(id: String, bundleID: String, name: String?, applicationURL: URL?,
+                group: AudioProcessGroup?, isRunningOutput: Bool) {
+        self.id = id
+        self.bundleID = bundleID
+        self.name = name
+        self.applicationURL = applicationURL
+        self.group = group
+        self.isRunningOutput = isRunningOutput
+    }
     public var label: String {
         // 名称来自系统本地化元数据；缺少名称时仍明确显示真实身份，不构造示例 App。
         if let name { return name }

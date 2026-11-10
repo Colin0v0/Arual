@@ -53,6 +53,7 @@ final class AppSettings: ObservableObject {
         static let appearance = "local.aural.settings.appearance"
         static let headphones = "local.aural.settings.showHeadphones"
         static let simultaneousOutput = "local.aural.settings.showSimultaneousOutput"
+        static let currentDeviceBattery = "local.aural.settings.showCurrentDeviceBattery"
     }
 
     private let defaults: UserDefaults
@@ -72,14 +73,18 @@ final class AppSettings: ObservableObject {
     @Published var showSimultaneousOutput: Bool {
         didSet { defaults.set(showSimultaneousOutput, forKey: Key.simultaneousOutput) }
     }
+    @Published var showCurrentDeviceBattery: Bool {
+        didSet { defaults.set(showCurrentDeviceBattery, forKey: Key.currentDeviceBattery) }
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         language = AppLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .system
         appearance = AppAppearance(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .system
-        // 耳机控制与同时输出都是可选能力，首次启动默认关闭，避免主面板主动扩展入口。
+        // 耳机控制、同时输出与菜单栏电量都是可选能力，首次启动默认关闭。
         showHeadphoneControls = defaults.object(forKey: Key.headphones) as? Bool ?? false
         showSimultaneousOutput = defaults.object(forKey: Key.simultaneousOutput) as? Bool ?? false
+        showCurrentDeviceBattery = defaults.object(forKey: Key.currentDeviceBattery) as? Bool ?? false
     }
 
     var resolvedLanguage: AppLanguage {
@@ -113,6 +118,41 @@ enum L10n {
     }
 
     private static let english: [String: String] = [
+        "正在切换音频路由…": "Switching the audio route…",
+        "未佩戴，戴回后恢复控制": "Not worn. Controls resume when worn again.",
+        "等待佩戴": "Waiting to be worn",
+        "Apple 耳机拒绝了本次模式切换，当前模式已重新读取；请确认佩戴状态后再操作":
+            "The headphones rejected this mode change. The actual mode was read again. Check that they are worn before trying again.",
+        "已选设备均暂不可用，等待原设备恢复": "All selected devices are temporarily unavailable. Waiting for them to return.",
+        "部分设备暂不可用，正通过其余已选设备播放；恢复后自动加入":
+            "Playing through the remaining selected devices. Unavailable members will rejoin when they return.",
+        "当前输出路由中没有可控制的耳机": "No controllable headphones in the current output route",
+        "控制的耳机": "Headphone to control",
+        "启用耳机控制": "Enable headphone controls",
+        "停止控制": "Stop controlling",
+        "耳机控制已暂停": "Headphone controls paused",
+        "选择要控制的耳机": "Select a headphone to control",
+        "当前仅支持原生 Float32 单声道或双声道 PCM；未启用音频接管": "Only native Float32 mono or stereo PCM is supported; audio processing was not enabled.",
+        "正在等待系统确认输出…": "Waiting for macOS to confirm the output…",
+        "实际输出：%@": "Actual output: %@",
+        "提示音输出：%@": "Sound effects output: %@",
+        "媒体与提示音输出不一致，请明确选择输出设备": "Media and sound effects use different outputs. Select an output explicitly.",
+        "路由仍在等待系统确认，请稍后重新应用": "Waiting for output confirmation. Apply again once it completes.",
+        "请先选择一台真实输出设备，再重新应用": "Select a physical output before applying again.",
+        "已请求离开旧组合": "Requested departure from the previous group",
+        "已确认离开旧组合": "Confirmed departure from the previous group",
+        "已释放旧组合": "Released the previous group",
+        "已创建并校验新组合": "Created and validated the new group",
+        "已请求目标输出": "Requested the target output",
+        "已确认目标输出": "Confirmed the target output",
+        "已按真实播放通道恢复被抢占的默认输出": "Restored the preempted default output to the real playback route",
+        "系统默认输出被反复抢占；Aural 已跟随真实输出并停止争抢。若为 AirPods，请在蓝牙设置中把“连接到此 Mac”改为“上次连接此 Mac 时”。":
+            "The system default output keeps being taken over. Aural followed the real output and stopped fighting for it. For AirPods, set “Connect to This Mac” to “When Last Connected to This Mac” in Bluetooth settings.",
+        "系统未在期限内确认媒体与提示音输出": "macOS did not confirm both output routes before the deadline",
+        "系统未在期限内释放组合设备，请重试释放": "macOS did not confirm group removal before the deadline. Retry cleanup.",
+        "系统未在期限内释放残留组合，请重试释放": "macOS did not confirm removal of the remaining group before the deadline. Retry cleanup.",
+        "系统输出已在 Aural 外改变；未自动抢回，请确认实际输出后重新选择": "Output changed outside Aural. It was not switched back; verify the actual output and select again.",
+        "应用未在期限内跟随已确认输出，请重新应用": "The app did not follow the confirmed output before the deadline. Apply again.",
         "设置": "Settings",
         "Aural 设置": "Aural Settings",
         "通用": "General",
@@ -135,6 +175,9 @@ enum L10n {
         "显示多设备输出": "Show Multi-Device Output",
         "关闭后，多设备输出功能从输出面板隐藏。":
             "When off, multi-device output is hidden from the Output panel.",
+        "显示当前设备剩余电量": "Show Current Device Battery",
+        "在菜单栏 Aural 图标右侧显示当前设备电量。":
+            "Show the current device battery next to the Aural icon in the menu bar.",
         "输出": "Output",
         "麦克风": "Microphone",
         "音频控制": "Audio Control",
@@ -143,6 +186,23 @@ enum L10n {
         "打开 Aural": "Open Aural",
         "设置…": "Settings…",
         "立即刷新": "Refresh Now",
+        "更新": "Update",
+        "发现新版本 %@": "Version %@ is available",
+        "打开更新 %@": "Open Update %@",
+        "跳过 %@": "Skip %@",
+        "下载中": "Downloading",
+        "准备中": "Preparing",
+        "重启以更新": "Restart to Update",
+        "重试更新": "Retry Update",
+        "更新到 %@ 失败：%@": "Update to %@ failed: %@",
+        "正在下载更新 %@ · %d%%": "Downloading update %@ · %d%%",
+        "正在下载更新 %@…": "Downloading update %@…",
+        "正在准备更新 %@…": "Preparing update %@…",
+        "重启以更新到 %@": "Restart to Update to %@",
+        "检查更新…": "Check for Updates…",
+        "检查更新": "Check for Updates",
+        "正在检查更新…": "Checking for Updates…",
+        "更新到 %@": "Update to %@",
         "音频录制权限…": "Audio Recording Permission…",
         "未能打开系统设置，请手动进入隐私与安全性 → 屏幕与系统音频录制。":
             "Could not open System Settings. Open Privacy & Security → Screen & System Audio Recording manually.",
@@ -168,6 +228,7 @@ enum L10n {
         "低于负 60 dBFS": "Below -60 dBFS",
         "同时输出设备": "Simultaneous Output",
         "同时输出 · %d 台": "Simultaneous Output · %d Devices",
+        "多设备输出 · %d 台": "Multi-Device Output · %d Devices",
         "同时输出待释放": "Simultaneous Output Pending Release",
         "清理残留设备": "Clean Up Leftover Device",
         "关闭同时输出提示": "Dismiss Simultaneous Output Message",
@@ -259,7 +320,6 @@ enum L10n {
         "上次的同时输出还在，清理后可重新设置":
             "Previous simultaneous output is still present; clean it up before setting up again",
         "选择上面的扬声器后，可调节 APP 音量与电平": "Select a speaker above to adjust app volume and levels",
-        "同时输出时暂不支持 APP 独立音量与电平": "Per-app volume and levels are unavailable during simultaneous output",
         "当前系统输出不支持 APP 独立音量与电平": "The current system output does not support per-app volume and levels"
     ]
 }

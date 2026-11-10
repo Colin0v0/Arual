@@ -54,7 +54,14 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     private var writeAcknowledged = false
     private var reply: BWRPCMessage?
 
-    private enum Purpose { case identify, refresh, setNoise(NoiseMode), confirmNoise(NoiseMode) }
+    private enum Purpose {
+        case identify, refresh, setNoise(NoiseMode), confirmNoise(NoiseMode)
+
+        var isIdentityCheck: Bool {
+            if case .identify = self { return true }
+            return false
+        }
+    }
     private struct Request {
         let command: BWRPCCommand
         let payload: MessagePackValue?
@@ -64,6 +71,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     private var current: Request?
     private var autoConnection = HeadphoneAutoConnection()
     private var observedOutput: AudioOutput?
+    private var selectedCandidateName: String?
     private var noiseProfile: BowersWilkinsNoiseProfile = .unverified
     private var scanningAutomatically = false
     private var scanStartedAt: Date?
@@ -75,11 +83,19 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     private var closingConnection = false
     private var suspended = false
     private var shuttingDown = false
+    private var routeAuthorized = true
     private var bindingConfirmed = false
     private var previousRadioState: CBManagerState = .unknown
 
     public override init() {
         super.init()
+    }
+
+    /// 保留 BLE 会话，但阻止未确认路由期间扫描、连接或发送排队请求。
+    public func setRouteAuthorization(_ authorized: Bool) {
+        guard routeAuthorized != authorized else { return }
+        routeAuthorized = authorized
+        if authorized { sendNext() }
     }
 
     /// 由真实的系统默认输出驱动；同一个 UID 的轮询不会反复触发连接。
@@ -96,7 +112,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     private func startAutomaticallyIfNeeded() {
-        guard !suspended, !shuttingDown, peripheral == nil, reconnectTimer == nil,
+        guard routeAuthorized, !suspended, !shuttingDown, peripheral == nil, reconnectTimer == nil,
               phase == .idle || isFailed, let output = observedOutput,
               autoConnection.takeInitialAttempt() else { return }
         beginConnectionScan(output: output, automatically: true)
@@ -154,10 +170,10 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     private func beginConnectionScan(output: AudioOutput, automatically: Bool) {
-        guard !suspended, !shuttingDown, peripheral == nil else { return }
+        guard routeAuthorized, !suspended, !shuttingDown, peripheral == nil else { return }
         cancelReconnect()
         do {
-            guard try SystemAudio.selectedOutputUID() == output.uid else { throw AudioFailure("系统输出已改变，请刷新后选择 B&W 耳机") }
+            try HeadphoneRouteGuard.check(output.uid)
             // 每次都按同一个经典蓝牙地址验证；BLE UUID 会变化，不读取旧 UUID 锁死新连接。
         } catch { fail(error.localizedDescription); return }
         clearReadings()
@@ -176,7 +192,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     private func beginScan(_ central: CBCentralManager) {
-        guard !suspended, !shuttingDown else { return }
+        guard routeAuthorized, !suspended, !shuttingDown else { return }
         guard central.state == .poweredOn else {
             if central.state == .unknown || central.state == .resetting { return }
             fail("蓝牙未开启或未授权，请在系统设置中检查")
@@ -226,18 +242,19 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     private func connectCandidate(_ id: UUID) {
-        guard !suspended, !shuttingDown, phase == .scanning || phase == .choosing,
+        guard routeAuthorized, !suspended, !shuttingDown, phase == .scanning || phase == .choosing,
               let central, central.state == .poweredOn,
               let candidate = discovered[id], peripheral == nil else { return }
         do {
-            guard let boundOutputUID, try SystemAudio.selectedOutputUID() == boundOutputUID else {
-                throw AudioFailure("系统输出已改变，取消耳机连接")
-            }
+            guard let boundOutputUID else { throw AudioFailure("耳机输出绑定已丢失") }
+            try HeadphoneRouteGuard.check(boundOutputUID)
         } catch { fail(error.localizedDescription); return }
         central.stopScan(); cancelDeadline(); cancelSelection()
         peripheral = candidate
         if let output = observedOutput, let item = candidates.first(where: { $0.id == id }) {
+            selectedCandidateName = item.name
             noiseProfile = BowersWilkinsNoiseProfile.identify(outputName: output.name, advertisedName: item.name)
+            trace("BLE CANDIDATE \(item.name)")
         }
         closingConnection = false
         candidate.delegate = self
@@ -302,13 +319,13 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     public func refresh() {
-        guard phase == .ready, !busy else { return }
+        guard routeAuthorized, phase == .ready, !busy else { return }
         errorMessage = nil
         enqueueReads()
     }
 
     public func setNoiseMode(_ mode: NoiseMode) {
-        guard phase == .ready, !busy, state.noiseMode != nil else { return }
+        guard routeAuthorized, phase == .ready, !busy, state.noiseMode != nil else { return }
         guard state.noiseMode != mode, let wireValue = noiseProfile.wireValue(for: mode) else { return }
         pendingNoiseMode = mode
         errorMessage = nil
@@ -319,6 +336,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     private func clearReadings() {
         state = BowersWilkinsState(); busy = false; pendingNoiseMode = nil; identityVerified = false
         bindingConfirmed = false
+        selectedCandidateName = nil
         queue = []; current = nil; reply = nil; writeAcknowledged = false
         requestCharacteristic = nil; responseCharacteristic = nil; eventCharacteristic = nil
         pendingServices = []; pendingSubscriptions = []
@@ -326,7 +344,8 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
 
     private func trace(_ line: String) {
         diagnosticLines.append(line)
-        if diagnosticLines.count > 24 { diagnosticLines.removeFirst(diagnosticLines.count - 24) }
+        // 身份失败后会重新扫描，保留更长的轨迹才能同时看到前后两次连接结果。
+        if diagnosticLines.count > 40 { diagnosticLines.removeFirst(diagnosticLines.count - 40) }
     }
 
     private func fail(_ message: String, reconnect: Bool = false) {
@@ -368,6 +387,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     private func sendNext() {
+        guard routeAuthorized else { return }
         guard current == nil else { return }
         guard !queue.isEmpty else {
             busy = false
@@ -384,9 +404,8 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
         }
         let next = queue.removeFirst()
         do {
-            guard let boundOutputUID, try SystemAudio.selectedOutputUID() == boundOutputUID else {
-                throw AudioFailure("系统输出已改变，已拒绝向之前绑定的耳机发送命令")
-            }
+            guard let boundOutputUID else { throw AudioFailure("耳机输出绑定已丢失") }
+            try HeadphoneRouteGuard.check(boundOutputUID)
             let packet = try BWRPC.request(next.command, payload: next.payload)
             guard packet.count <= peripheral.maximumWriteValueLength(for: .withResponse) else {
                 throw AudioFailure("耳机单次写入长度不足")
@@ -406,8 +425,22 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
             switch request.purpose {
             case .identify:
                 guard reply.succeeded else { throw AudioFailure("耳机拒绝硬件身份查询") }
-                guard let reported = reply.payload?.stringValue, let boundOutputUID,
-                      HeadphonePhysicalIdentity.matches(reported: reported, outputUID: boundOutputUID) else {
+                guard let reported = reply.payload?.stringValue else {
+                    throw AudioFailure("耳机身份响应不是可验证的地址")
+                }
+                guard let boundOutputUID else {
+                    throw AudioFailure("当前系统输出已改变，无法验证耳机身份")
+                }
+                let matches = HeadphonePhysicalIdentity.matchesBowersWilkinsControl(
+                    reported: reported,
+                    outputUID: boundOutputUID,
+                    advertisedName: selectedCandidateName,
+                    outputName: observedOutput?.name
+                )
+                guard matches else {
+                    // 只记录地址，不发送任何控制命令；下一次扫描会重新选择广播并再次严格核验。
+                    let expected = HeadphonePhysicalIdentity.addressInOutputUID(boundOutputUID) ?? "invalid"
+                    trace("PHYSICAL ADDRESS MISMATCH reported=\(reported) expected=\(expected)")
                     throw AudioFailure("耳机硬件身份与当前音频输出不匹配，已停止连接")
                 }
                 identityVerified = true
@@ -431,7 +464,11 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
             }
             current = nil; self.reply = nil; writeAcknowledged = false
             sendNext()
-        } catch { fail(error.localizedDescription) }
+        } catch {
+            // 身份查询阶段尚未发送控制命令。失败的可能是过早选中的旧广播，
+            // 因此重新扫描一次，不能把整个自动连接永久锁死。
+            fail(error.localizedDescription, reconnect: request.purpose.isIdentityCheck)
+        }
     }
 
     private func finishDiscovery() {

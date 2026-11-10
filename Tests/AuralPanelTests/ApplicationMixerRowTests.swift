@@ -25,7 +25,11 @@ struct ApplicationMixerRowTests {
             records: [], executableURLs: [:]
         )
         let app = try #require(rows.first)
-        let row = ApplicationMixerRow(app: app, state: state, level: level, awaitingStream: false,
+        let levelSource = ApplicationLevelSource()
+        levelSource.update(level)
+        let row = ApplicationMixerRow(app: app, state: state,
+                                      levelSource: levelSource, metersVisible: true,
+                                      awaitingStream: false,
                                       status: "测试布局", toggleMute: {}, setGain: { _ in },
                                       retryMeter: {}, applyConfiguration: {}, stopManaging: {})
             .font(PanelStyle.bodyFont)

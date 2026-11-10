@@ -7,7 +7,7 @@ struct TransportLogEntry {
 
 enum HeadphoneRouteGuard {
     static func check(_ outputUID: String) throws {
-        guard try SystemAudio.selectedOutputUID() == outputUID else {
+        guard try SystemAudio.selectedRouteContains(outputUID) else {
             throw AudioFailure("系统输出已改变，停止向之前的耳机发送数据")
         }
     }

@@ -1,53 +1,11 @@
 import SwiftUI
 import AuralCore
 
-/// 只保存本次打开的勾选顺序。取消选择不修改系统路由，启动也不持久化或自动恢复。
+/// 视图只保留展开状态，成员选择与实际播放完全来自模型。
 @MainActor
-final class OutputRoutingSelection: ObservableObject {
-    @Published private(set) var isChoosing = false
-    @Published private(set) var uids: [String] = []
-
-    /// 新路由从空白开始；勾选第一台设备时立即生效。
-    func begin() {
-        isChoosing = true
-        uids = []
-    }
-
-    /// 编辑已有同时输出时沿用当前成员顺序。
-    func begin(route: MultiOutputRoute) {
-        isChoosing = true
-        uids = route.outputs.map(\.uid)
-    }
-
-    func toggle(_ uid: String) {
-        if uids.contains(uid) { uids.removeAll { $0 == uid } }
-        else { uids.append(uid) }
-    }
-
-    /// 勾选变化本身就是提交动作，不再等待单独的“开始”或“应用”按钮。
-    func toggleAndDecide(_ uid: String, routeIsActive: Bool) -> SimultaneousOutputSelectionChange {
-        // 至少保留一个真实输出，不能出现全灭但旧设备仍播放的状态。
-        guard uids != [uid] else { return .none }
-        toggle(uid)
-        guard !uids.isEmpty else { return routeIsActive ? .stop : .none }
-        return routeIsActive ? .update(uids) : .start(uids)
-    }
-
-    func restore(_ previous: [String]) { uids = previous }
-
-    func cancel() { isChoosing = false; uids = [] }
-
-    func canStart(available: [AudioOutput]) -> Bool {
-        let eligible = Set(available.filter(\.supportsSimultaneousOutput).map(\.uid))
-        return !uids.isEmpty && uids.allSatisfy { eligible.contains($0) }
-    }
-}
-
-enum SimultaneousOutputSelectionChange: Equatable {
-    case none
-    case start([String])
-    case update([String])
-    case stop
+final class OutputRoutingDisclosure: ObservableObject {
+    @Published var isChoosing = false
+    func cancel() { isChoosing = false }
 }
 
 /// 同时输出错误与关闭按钮共用操作按钮高度，文字块和按钮始终沿同一水平中心线排列。
@@ -74,25 +32,24 @@ struct OutputRoutingErrorRow: View {
 
 struct OutputRoutingSection: View {
     let audio: SystemAudioSnapshot
-    let route: MultiOutputRoute?
-    let error: String?
+    let routing: OutputRoutingState
+    private var route: MultiOutputRoute? { routing.confirmed?.aggregate }
+    private var error: String? { routing.error }
     let select: (UInt32) -> Void
     let setVolume: (Float, UInt32) -> Void
     let setMuted: (Bool, UInt32) -> Void
-    let start: ([String]) -> Bool
     let stop: () -> Void
     let dismissError: () -> Void
     var setSimultaneousVolume: (Float) -> Void = { _ in }
     var setSimultaneousMuted: (Bool) -> Void = { _ in }
-    var applySimultaneousOutput: ([String]) -> Bool = { _ in false }
-    var selectedHeightChanged: () -> Void = {}
+    let toggleMember: (String) -> Void
     // 预览和独立测试可以显式保留入口；真实运行值始终由 AppSettings 注入。
     var showSimultaneousOutput = true
-    @StateObject private var selection = OutputRoutingSelection()
+    @StateObject private var selection = OutputRoutingDisclosure()
     @Environment(\.appLanguage) private var language
 
     private var unmanagedOutputs: [AudioOutput] {
-        audio.outputs.filter { $0.isAuralMultiOutput && $0.uid != route?.uid }
+        routing.pendingCleanup
     }
 
     private var selectedUnmanagedOutput: Bool { unmanagedOutputs.contains { $0.id == audio.selectedID } }
@@ -102,18 +59,17 @@ struct OutputRoutingSection: View {
         return Set(route.outputs.map(\.uid))
     }
 
-    /// 草稿至少勾选一台设备后就代表同时输出模式；高亮移到下方入口。
-    /// 空草稿仍保留当前硬件的高亮，确保界面始终有一个明确的选中项。
-    private var draftHasMembers: Bool {
-        selection.isChoosing && !selection.uids.isEmpty
+    private var selectedUIDs: Set<String> {
+        routing.isSimultaneous ? Set(routing.selectedMemberUIDs) : []
     }
 
     /// 组合行使用所有成员共同可写的控制；成员能力不一致时明确禁用统一控制。
     private var simultaneousControl: SimultaneousOutputControl? {
-        guard let route else { return nil }
+        guard routing.isSimultaneous, let confirmed = routing.confirmed else { return nil }
+        let outputs = confirmed.aggregate?.outputs ?? [confirmed.output]
         var volumes: [AudioDeviceVolume] = []
         var mutes: [AudioDeviceMute] = []
-        for output in route.outputs {
+        for output in outputs {
             guard case .available(let volume, let mute) = audio.controls[output.id] else {
                 return SimultaneousOutputControl(scalar: nil, volumeWritable: false,
                                                  muted: nil, muteWritable: false)
@@ -141,26 +97,52 @@ struct OutputRoutingSection: View {
                      : L10n.text("上次的同时输出还在，清理后可重新设置", language: language))
                     .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
             }
+            if routing.phase.isBusy {
+                Text(L10n.text("正在等待系统确认输出…", language: language))
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+            }
+            if routing.phase == .awaitingMembers {
+                Text(L10n.text("已选设备均暂不可用，等待原设备恢复", language: language))
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+            } else if !routing.phase.isBusy, routing.confirmed != nil, !routing.unavailableMemberUIDs.isEmpty {
+                Text(L10n.text("部分设备暂不可用，正通过其余已选设备播放；恢复后自动加入", language: language))
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+            }
+            if let warning = routing.warning {
+                Text(L10n.text(warning, language: language))
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+            }
             if let error {
                 OutputRoutingErrorRow(text: L10n.text(error, language: language),
                                       canDismiss: route == nil && unmanagedOutputs.isEmpty,
                                       dismiss: dismissError)
+                if let actual = routing.actualOutput {
+                    Text(L10n.format("实际输出：%@", language: language, arguments: [actual.name]))
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                }
+                if let systemID = routing.actualSystemOutputID,
+                   systemID != routing.actualOutput?.id,
+                   let systemOutput = audio.outputs.first(where: { $0.id == systemID }) {
+                    Text(L10n.format("提示音输出：%@", language: language, arguments: [systemOutput.name]))
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                }
+                if !routing.completedSteps.isEmpty {
+                    Text(routing.completedSteps.map { L10n.text($0, language: language) }.joined(separator: " · "))
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                }
             }
             if selection.isChoosing {
-                // 草稿展开时仍保留设备列表，折叠内容紧跟在组合行下方。
+                // 展开仅显示模型确认的成员，不构造另一份播放草稿。
                 VStack(alignment: .leading, spacing: 0) {
                     routingList
                     SimultaneousOutputEditor(
-                        selection: selection,
-                        outputs: audio.outputs,
-                        controls: audio.controls,
-                        route: route,
-                        start: start,
-                        stop: stop,
-                        setVolume: setVolume,
-                        setMuted: setMuted,
-                        applySimultaneousOutput: applySimultaneousOutput,
-                        selectedHeightChanged: selectedHeightChanged
+                        outputs: audio.outputs + routing.configuredOutputs.filter { configured in
+                            !audio.outputs.contains { $0.uid == configured.uid }
+                        }, controls: audio.controls,
+                        selectedUIDs: selectedUIDs, toggleMember: toggleMember,
+                        setVolume: setVolume, setMuted: setMuted
                     )
                 }
             } else {
@@ -173,7 +155,6 @@ struct OutputRoutingSection: View {
         .onChange(of: showSimultaneousOutput) { _, shown in
             if !shown, selection.isChoosing {
                 selection.cancel()
-                selectedHeightChanged()
             }
         }
     }
@@ -184,37 +165,26 @@ struct OutputRoutingSection: View {
             OutputDevicesSection(audio: audio, select: selectDeviceFromPhysicalList,
                                  setVolume: setVolume, setMuted: setMuted,
                                  simultaneousUIDs: simultaneousUIDs,
-                                 selectionSuppressed: draftHasMembers,
+                                 selectionSuppressed: routing.isSimultaneous,
                                  hiddenUID: route?.uid)
             if let route {
-                if route.deviceID == audio.selectedID {
-                    SimultaneousOutputRow(
-                        title: L10n.format("同时输出 · %d 台", language: language,
-                                           arguments: [route.outputs.count]),
-                        selected: true,
-                        expanded: selection.isChoosing,
-                        control: simultaneousControl,
-                        toggle: toggleEditor,
-                        setVolume: setSimultaneousVolume,
-                        setMuted: setSimultaneousMuted
-                    )
-                    .help(route.outputs.map(\.name).joined(separator: "\n"))
-                } else {
-                    // 系统已切走但组合设备仍需释放时，只提供明确的恢复操作。
-                    HStack(spacing: 7) {
-                        Image(systemName: "rectangle.on.rectangle")
-                            .font(.system(size: 13))
-                            .foregroundStyle(PanelStyle.secondary)
-                            .accessibilityHidden(true)
-                        Text(L10n.text("同时输出待释放", language: language))
-                            .font(PanelStyle.captionFont)
-                            .foregroundStyle(PanelStyle.secondary)
-                        Spacer()
-                        PanelActionButton(L10n.text("重试释放", language: language), action: stop)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: PanelMetrics.deviceRowHeight)
-                }
+                SimultaneousOutputRow(
+                    title: L10n.format("多设备输出 · %d 台", language: language,
+                                       arguments: [route.outputs.count]),
+                    selected: true,
+                    expanded: selection.isChoosing,
+                    control: simultaneousControl,
+                    toggle: toggleEditor,
+                    setVolume: setSimultaneousVolume,
+                    setMuted: setSimultaneousMuted
+                )
+                .help(route.outputs.map(\.name).joined(separator: "\n"))
+            } else if routing.isSimultaneous {
+                SimultaneousOutputRow(
+                    title: L10n.text("同时输出设备", language: language), selected: true,
+                    expanded: selection.isChoosing, control: simultaneousControl,
+                    toggle: toggleEditor, setVolume: setSimultaneousVolume, setMuted: setSimultaneousMuted
+                )
             } else if !unmanagedOutputs.isEmpty {
                 // 没有上一轮的原输出记录时，必须先由用户选择真实设备。
                 if !selectedUnmanagedOutput {
@@ -232,7 +202,7 @@ struct OutputRoutingSection: View {
             } else if showSimultaneousOutput {
                 SimultaneousOutputRow(
                     title: L10n.text("同时输出设备", language: language),
-                    selected: draftHasMembers,
+                    selected: false,
                     expanded: selection.isChoosing,
                     control: nil,
                     toggle: toggleEditor,
@@ -244,28 +214,14 @@ struct OutputRoutingSection: View {
     }
 
     private func toggleEditor() {
-        if selection.isChoosing {
-            // 单成员同时输出没有聚合路由；收起编辑区时同步结束保留状态，避免低层继续锁住默认输出。
-            let endsSingleDeviceMode = route == nil && !selection.uids.isEmpty
-            selection.cancel()
-            if endsSingleDeviceMode { stop() }
-            selectedHeightChanged()
-            return
-        }
-        dismissError()
-        if let route, route.deviceID == audio.selectedID {
-            selection.begin(route: route)
-        } else {
-            selection.begin()
-        }
-        selectedHeightChanged()
+        // 展示行为不调用停止、释放或选择输出；单成员模式折叠后仍保持蓝色并继续播放。
+        selection.isChoosing.toggle()
     }
 
     /// 上方真实设备行的语义始终是“切换为单一输出”；点击时立即收起多输出草稿，避免两套选择状态并存。
     private func selectDeviceFromPhysicalList(_ id: UInt32) {
         if selection.isChoosing {
             selection.cancel()
-            selectedHeightChanged()
         }
         select(id)
     }
@@ -273,40 +229,22 @@ struct OutputRoutingSection: View {
 
 /// 向下展开的成员选择沿用当前勾选顺序，并允许只启用一台设备。
 struct SimultaneousOutputEditor: View {
-    @ObservedObject var selection: OutputRoutingSelection
     let outputs: [AudioOutput]
     let controls: [UInt32: AudioDeviceControlState]
-    let route: MultiOutputRoute?
-    let start: ([String]) -> Bool
-    let stop: () -> Void
+    let selectedUIDs: Set<String>
+    let toggleMember: (String) -> Void
     let setVolume: (Float, UInt32) -> Void
     let setMuted: (Bool, UInt32) -> Void
-    let applySimultaneousOutput: ([String]) -> Bool
-    let selectedHeightChanged: () -> Void
     @Environment(\.appLanguage) private var language
 
     var body: some View {
         VStack(spacing: 1) {
-            ForEach(Self.visibleOutputs(outputs: outputs, controls: controls, selectedUIDs: Set(selection.uids))) { output in
+            ForEach(Self.visibleOutputs(outputs: outputs, controls: controls, selectedUIDs: selectedUIDs)) { output in
                 SimultaneousOutputDeviceRow(
                     output: output,
                     control: controls[output.id],
-                    selected: selection.uids.contains(output.uid),
-                    toggle: {
-                        let previous = selection.uids
-                        let change = selection.toggleAndDecide(output.uid, routeIsActive: route != nil)
-                        switch change {
-                        case .none:
-                            break
-                        case .start(let uids):
-                            if !start(uids) { selection.restore(previous) }
-                        case .update(let uids):
-                            if !applySimultaneousOutput(uids) { selection.restore(previous) }
-                        case .stop:
-                            stop()
-                        }
-                        selectedHeightChanged()
-                    },
+                    selected: selectedUIDs.contains(output.uid),
+                    toggle: { toggleMember(output.uid) },
                     setVolume: { setVolume($0, output.id) },
                     setMuted: { setMuted($0, output.id) }
                 )

@@ -41,4 +41,25 @@ struct AudioProcessesTests {
         #expect(pidReads == 2)
         #expect(records.map(\.objectID) == [100])
     }
+
+    @Test func activeOutputsComeFromPlayingProcessesAndIgnoreVanishedObjects() throws {
+        let devices = try AudioProcesses.readActiveOutputDeviceIDs(
+            objectIDs: [100, 101, 102, 103],
+            readPID: { object in
+                if object == 102 { throw AudioFailure("进程已退出", status: HAL.badObjectStatus) }
+                return 10
+            },
+            readRunningOutput: { object in object == 101 ? 0 : 1 },
+            readDevices: { object in
+                switch object {
+                case 100: return [7, 8]
+                case 103: return [8]
+                default: return []
+                }
+            },
+            currentObjectIDs: { [100, 101, 103] }
+        )
+
+        #expect(devices == [7, 8])
+    }
 }

@@ -31,6 +31,60 @@ public enum AudioProcesses {
         )
     }
 
+    /// 读取正在输出进程的真实播放设备。默认输出只是候选，进程对象才是声音实际去了哪里。
+    public static func activeOutputDeviceIDs() throws -> [AudioDeviceID] {
+        let objects = try HAL.ids(HAL.system, HAL.address(kAudioHardwarePropertyProcessObjectList))
+        return try readActiveOutputDeviceIDs(
+            objectIDs: objects,
+            readPID: { try HAL.read($0, HAL.address(kAudioProcessPropertyPID), initial: 0) },
+            readRunningOutput: { try HAL.read($0, HAL.address(kAudioProcessPropertyIsRunningOutput), initial: 0) },
+            readDevices: {
+                try HAL.ids($0, HAL.address(kAudioProcessPropertyDevices,
+                                            scope: kAudioObjectPropertyScopeOutput))
+            },
+            currentObjectIDs: {
+                try HAL.ids(HAL.system, HAL.address(kAudioHardwarePropertyProcessObjectList))
+            }
+        )
+    }
+
+    /// 进程对象可能在枚举后立即退出；消失的对象直接跳过，仍存在的对象重试一次同一只读请求。
+    static func readActiveOutputDeviceIDs(objectIDs: [AudioObjectID],
+                                          readPID: (AudioObjectID) throws -> Int32,
+                                          readRunningOutput: (AudioObjectID) throws -> UInt32,
+                                          readDevices: (AudioObjectID) throws -> [AudioDeviceID],
+                                          currentObjectIDs: () throws -> [AudioObjectID]) throws -> [AudioDeviceID] {
+        var result: Set<AudioDeviceID> = []
+        for object in objectIDs {
+            var completed = false
+            for attempt in 0..<2 where !completed {
+                do {
+                    guard try readPID(object) != getpid() else {
+                        completed = true
+                        continue
+                    }
+                    guard try readRunningOutput(object) != 0 else {
+                        completed = true
+                        continue
+                    }
+                    result.formUnion(try readDevices(object))
+                    completed = true
+                } catch {
+                    let stillPresent = try currentObjectIDs().contains(object)
+                    guard stillPresent else {
+                        completed = true
+                        continue
+                    }
+                    if attempt == 1 { throw error }
+                    if let failure = error as? AudioFailure, failure.status == HAL.badObjectStatus {
+                        Thread.sleep(forTimeInterval: 0.03)
+                    }
+                }
+            }
+        }
+        return result.sorted()
+    }
+
     /// 音频进程对象会随播放器创建和退出频繁变化；消失的对象必须跳过，不能拖垮整份音频快照。
     static func readRecords(objectIDs: [AudioObjectID],
                             readPID: (AudioObjectID) throws -> Int32,

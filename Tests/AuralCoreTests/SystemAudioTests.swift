@@ -3,6 +3,32 @@ import CoreAudio
 @testable import AuralCore
 
 struct SystemAudioTests {
+    @Test func invalidObjectStillListedProducesPendingSnapshotInsteadOfPartialSuccess() {
+        var nameReads = 0
+        do {
+            _ = try SystemAudio.readOutputs(
+                deviceIDs: [11, 22],
+                readStreams: { _ in [1] },
+                readUID: { "speaker-\($0)" },
+                readName: { id in
+                    if id == 22 {
+                        nameReads += 1
+                        throw AudioFailure("读取音频名称失败", status: HAL.badObjectStatus)
+                    }
+                    return "扬声器 \(id)"
+                },
+                readTransport: { _ in kAudioDeviceTransportTypeBuiltIn },
+                currentDeviceIDs: { [11, 22] }
+            )
+            Issue.record("失效对象仍在列表中时，不能返回不完整的成功快照")
+        } catch let pending as AudioSnapshotPending {
+            #expect(pending.failure.status == HAL.badObjectStatus)
+            #expect(nameReads == 2)
+        } catch {
+            Issue.record("应返回枚举待确认状态，而不是普通失败：\(error)")
+        }
+    }
+
     @Test func invalidVolumeIsRejectedBeforeHardwareAccess() {
         for value: Float in [-0.1, 1.1, .nan, .infinity] {
             #expect(throws: (any Error).self) { try SystemAudio.setVolume(value, on: 0) }
@@ -139,5 +165,39 @@ struct SystemAudioTests {
         #expect(outputs.map(\.id) == [22])
     }
 
-    @Test func versionIsDefined() { #expect(AuralVersion.current == "0.1.10") }
+    @Test func aggregateCompositionRecognizesARealMember() {
+        let composition: [String: Any] = [
+            kAudioAggregateDeviceSubDeviceListKey: [
+                [kAudioSubDeviceUIDKey: "EC-66-D1-CE-8C-CB:output"],
+                [kAudioSubDeviceUIDKey: "BuiltInSpeakerDevice"]
+            ]
+        ]
+
+        // 多设备输出期间默认 UID 是聚合设备，耳机仍应被识别为当前路由成员。
+        #expect(SystemAudio.aggregateCompositionContains("EC-66-D1-CE-8C-CB:output",
+                                                         composition: composition as CFDictionary))
+        #expect(SystemAudio.aggregateCompositionContains("BuiltInSpeakerDevice",
+                                                         composition: composition as CFDictionary))
+        #expect(!SystemAudio.aggregateCompositionContains("not-a-member",
+                                                          composition: composition as CFDictionary))
+    }
+
+    @Test func aggregateCompositionWithoutMemberListDoesNotMatch() {
+        let composition: [String: Any] = [kAudioAggregateDeviceNameKey: "不完整聚合"]
+        #expect(!SystemAudio.aggregateCompositionContains("member",
+                                                          composition: composition as CFDictionary))
+    }
+
+    @Test func configuredButInactiveHeadphoneCannotKeepControlAuthorization() {
+        let composition: [String: Any] = [kAudioAggregateDeviceSubDeviceListKey: [
+            [kAudioSubDeviceUIDKey: "apple"], [kAudioSubDeviceUIDKey: "bw"]
+        ]]
+        for uid in ["apple", "bw"] {
+            #expect(SystemAudio.activeAggregateRouteContains(uid, composition: composition as CFDictionary, activeUIDs: [uid]))
+            #expect(!SystemAudio.activeAggregateRouteContains(uid, composition: composition as CFDictionary, activeUIDs: []))
+        }
+        #expect(!SystemAudio.activeAggregateRouteContains("other", composition: composition as CFDictionary, activeUIDs: ["other"]))
+    }
+
+    @Test func versionIsDefined() { #expect(AuralVersion.current == "0.1.11") }
 }

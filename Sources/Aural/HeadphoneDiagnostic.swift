@@ -10,10 +10,22 @@ enum HeadphoneDiagnostic {
         var code: Int32 = 1
         do {
             let audio = try SystemAudio.snapshot()
-            guard let output = audio.outputs.first(where: { $0.id == audio.selectedID }),
-                  controller.supports(output) else {
-                throw AudioFailure("当前系统输出没有受支持的耳机驱动；诊断不会替你切换设备。")
+            guard let selected = audio.outputs.first(where: { $0.id == audio.selectedID }) else {
+                throw AudioFailure("当前没有可用输出")
             }
+            // 多设备输出的默认项是聚合设备；诊断与耳机页一样，只控制真实路由中的唯一成员。
+            let supported = audio.outputs.filter { controller.supports($0) }
+            let candidates = try supported.filter { try SystemAudio.selectedRouteContains($0.uid) }
+            guard try SystemAudio.selectedOutputUID() == selected.uid else {
+                throw AudioFailure("诊断期间系统输出已改变，请重新检查")
+            }
+            guard candidates.count == 1 else {
+                if candidates.count > 1 {
+                    throw AudioFailure("当前路由有多副可控耳机，请在耳机页明确选择控制对象")
+                }
+                throw AudioFailure("当前输出路由没有受支持的耳机；诊断不会替你切换设备")
+            }
+            let output = candidates[0]
             controller.updateOutput(output)
             let limit = Date().addingTimeInterval(45)
             while Date() < limit {
@@ -25,6 +37,7 @@ enum HeadphoneDiagnostic {
                     result["noiseMode"] = controller.state.noiseMode.map { $0.rawValue as Any } ?? NSNull()
                     result["family"] = controller.family?.rawValue
                     result["supportedNoiseModes"] = controller.supportedNoiseModes.map(\.rawValue)
+                    result["boundOutputUID"] = controller.boundOutputUID
                     code = 0
                     break
                 }
@@ -36,6 +49,7 @@ enum HeadphoneDiagnostic {
                 if controller.phase == .choosing {
                     result["status"] = "needs-selection"
                     result["candidates"] = controller.candidates.map { ["name": $0.name, "id": $0.id.uuidString] }
+                    result["boundOutputUID"] = controller.boundOutputUID
                     code = 2
                     break
                 }
@@ -45,6 +59,7 @@ enum HeadphoneDiagnostic {
         } catch {
             result["status"] = "failed"
             result["error"] = error.localizedDescription
+            result["boundOutputUID"] = controller.boundOutputUID
         }
         result["trace"] = controller.diagnosticLines
         controller.shutdown()

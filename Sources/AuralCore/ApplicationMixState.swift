@@ -8,12 +8,14 @@ public enum MixSessionAction: Equatable {
 public enum ApplicationMixFailure: Equatable {
     case fineTuneRunning
     case fineTuneExited
+    case outputChanged
     case other(String)
 
     public var message: String {
         switch self {
         case .fineTuneRunning: return "请先手动退出 FineTune，避免重复处理音频。"
         case .fineTuneExited: return "FineTune 已退出，音量配置尚未应用。"
+        case .outputChanged: return "系统输出已改变；点重新应用后才会在新设备上处理。"
         case .other(let message): return message
         }
     }
@@ -47,19 +49,21 @@ public struct ApplicationMixState: Equatable {
     }
     public mutating func disable() { managed = false; boundOutputUID = nil; failureReason = nil }
     public mutating func fail(_ message: String) { failureReason = .other(message) }
+    public mutating func markOutputChanged() { failureReason = .outputChanged }
     public mutating func blockForFineTune() { failureReason = .fineTuneRunning }
+
+    /// 用户通过 Aural 主动切换输出或缩成单设备时，绑定跟随新路由。
+    /// 只清除输出变化错误；权限、路由失配等真实失败仍保持锁存。
+    public mutating func rebind(outputUID: String) {
+        guard managed else { return }
+        boundOutputUID = outputUID
+        if failureReason == .outputChanged { failureReason = nil }
+    }
 
     public mutating func updateFineTuneAvailability(isRunning: Bool) {
         // 只更新同一类冲突，不覆盖权限、路由、清理失败；退出后仍需明确重新应用。
         guard failureReason == .fineTuneRunning || failureReason == .fineTuneExited else { return }
         failureReason = isRunning ? .fineTuneRunning : .fineTuneExited
-    }
-
-    @discardableResult
-    public mutating func pauseIfOutputChanged(currentUID: String) -> Bool {
-        guard managed, boundOutputUID != currentUID else { return false }
-        if failure == nil { fail("系统输出已改变；点重新应用后才会在新设备上处理。") }
-        return true
     }
 
     public func action(group: AudioProcessGroup?, sessionObjectIDs: [UInt32]?) -> MixSessionAction {
