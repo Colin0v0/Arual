@@ -263,6 +263,23 @@ struct MultiOutputDeviceTests {
         #expect(device.route == nil)
     }
 
+    @Test func unconfirmedAggregateReleaseRemainsRetryable() throws {
+        let fixture = Fixture()
+        let device = MultiOutputDevice(hardware: fixture.hardware)
+        try device.start(outputUIDs: ["first", "second"])
+        // 模拟 HAL 返回销毁成功但设备仍在枚举结果中：界面不能误报释放完成。
+        fixture.keepAggregateAfterDestroy = true
+        #expect(throws: (any Error).self) { try device.stop(selecting: "third") }
+        #expect(device.route?.deviceID == 99)
+        #expect(device.requiresCleanup)
+
+        fixture.keepAggregateAfterDestroy = false
+        try device.stop(selecting: "third")
+        #expect(device.route == nil)
+        #expect(!device.requiresCleanup)
+        #expect(fixture.destroyed == [99, 99])
+    }
+
     @Test func thirdPartyAggregateIsNotRestoredAfterStoppingNewRoute() throws {
         let fixture = Fixture()
         fixture.otherOutputs = [
@@ -468,11 +485,12 @@ private final class Fixture {
     var failSelection = false
     var failSelectionAfterWrite = false
     var failDestroy = false
+    var keepAggregateAfterDestroy = false
     var selectionAfterDestroy: AudioDeviceID?
 
     var snapshot: SystemAudioSnapshot {
         var outputs = Self.outputs + otherOutputs.filter { !destroyed.contains($0.id) }
-        if let description = creations.last, !destroyed.contains(99),
+        if let description = creations.last, keepAggregateAfterDestroy || !destroyed.contains(99),
            let uid = description[kAudioAggregateDeviceUIDKey] as? String {
             outputs.append(AudioOutput(id: 99, uid: uid, name: "测试同时输出", transport: kAudioDeviceTransportTypeAggregate))
         }
@@ -506,6 +524,7 @@ private final class Fixture {
             self.destroyAttempts += 1
             if self.failDestroy { throw AudioFailure("销毁失败") }
             self.destroyed.append(id)
+            if self.keepAggregateAfterDestroy { return }
             if let selectionAfterDestroy = self.selectionAfterDestroy {
                 self.selected = selectionAfterDestroy
             }

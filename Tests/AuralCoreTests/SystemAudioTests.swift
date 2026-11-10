@@ -139,5 +139,5 @@ struct SystemAudioTests {
         #expect(outputs.map(\.id) == [22])
     }
 
-    @Test func versionIsDefined() { #expect(AuralVersion.current == "0.1.9") }
+    @Test func versionIsDefined() { #expect(AuralVersion.current == "0.1.10") }
 }
