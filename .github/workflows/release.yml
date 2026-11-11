@@ -1,0 +1,159 @@
+name: Release
+
+# 合并提交进入 main 后，反查对应的 PR；只有 release/* 才构建并发布。
+# 使用 push 而不是 pull_request.closed，保证新增本文件的那个 release PR 合并后也能立即生效。
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+# 发布必须串行执行；取消进行中的任务可能留下已创建的 tag 或半成品 Release。
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: macos-15
+    outputs:
+      should_release: ${{ steps.detect.outputs.should_release }}
+      version: ${{ steps.detect.outputs.version }}
+      tag: ${{ steps.detect.outputs.tag }}
+
+    steps:
+      - name: 识别合并到 main 的 release PR
+        id: detect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # GitHub 会把合并后的提交关联回原 PR；普通功能 PR 在这里直接结束，不生成发布。
+          RELEASE_PRS="$(gh api "repos/$REPOSITORY/commits/$COMMIT_SHA/pulls" \
+            --jq '.[] | select(.merged_at != null) | select(.head.ref | startswith("release/")) | .head.ref')"
+          COUNT="$(printf '%s\n' "$RELEASE_PRS" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [[ "$COUNT" == "0" ]]; then
+            echo "本次 main 推送不是 release/* 合并，跳过发布。"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$COUNT" != "1" ]]; then
+            echo "同一次推送关联了多个 release PR，拒绝猜测发布版本：$RELEASE_PRS" >&2
+            exit 1
+          fi
+          HEAD_REF="$(printf '%s\n' "$RELEASE_PRS" | sed -n '1p')"
+          VERSION="${HEAD_REF#release/}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "发布分支必须是 release/<major>.<minor>.<patch>，实际为：$HEAD_REF" >&2
+            exit 1
+          fi
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: macos-15
+
+    steps:
+      - name: 检出合并后的 main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 校验发布分支与源码版本
+        id: version
+        shell: bash
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          SOURCE_VERSION="$(sed -n 's/.*public static let current = "\([^"]*\)".*/\1/p' Sources/AuralCore/AuralVersion.swift)"
+          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          if [[ "$SOURCE_VERSION" != "$VERSION" || "$PLIST_VERSION" != "$VERSION" ]]; then
+            echo "版本不一致：分支 $VERSION，源码 $SOURCE_VERSION，Info.plist $PLIST_VERSION" >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "检出内容不是干净的提交，停止发布。" >&2
+            exit 1
+          fi
+          # tag 必须尚未存在；自动发布不能覆盖或移动已有版本。
+          if git rev-parse "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "标签 v$VERSION 已存在，拒绝重复发布。" >&2
+            exit 1
+          fi
+
+      - name: 完整检查
+        run: ./Scripts/check-ci.sh
+
+      - name: 构建可拖动安装的 DMG
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./Scripts/build-dmg.sh
+          DMG="dist/Aural-${VERSION}-macOS-arm64.dmg"
+          test -f "$DMG"
+          test -f "$DMG.sha256"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: 创建 GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          DMG: ${{ steps.package.outputs.dmg }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NOTES="$(mktemp)"
+          trap 'rm -f "$NOTES"' EXIT
+          cat > "$NOTES" <<EOF
+          ## Aural $VERSION 开发预览
+
+          1. 设置页和输出设备的整行悬停改为中性灰，不再使用蓝色渐变或左侧强调条。
+          2. 新增 release/* PR 合并后自动构建、校验并发布 DMG 与 SHA-256 的工作流。
+          3. 更新检查改用 GitHub Releases Atom 源，避开匿名 REST API 配额，并支持从 DMG 安装更新。
+
+          ### 安装与更新
+
+          - 适用于 macOS 15.4 或更新版本的 Apple Silicon Mac。
+          - Release 优化构建，版本 $VERSION；提供可拖入 Applications 的 DMG 和 SHA-256 校验文件。
+          - 采用 ad-hoc 签名，未经过 Apple 公证，不等同于 Developer ID 签名。
+          - 合并 release/$VERSION 后由 GitHub Actions 自动发布。
+
+          ### 校验
+
+          下载后可在终端执行：
+
+          \`\`\`sh
+          gh release download $TAG --repo $REPOSITORY
+          shasum -a 256 -c \$(basename "$DMG").sha256
+          \`\`\`
+
+          ### 请先了解
+
+          - 本版为开发预览，安装包未完成 Apple 公证。
+          - 如遇更新安装问题，请保留发布页、校验结果和系统版本信息以便定位。
+          EOF
+          # 先创建 tag；若远端 tag 已被他人抢先创建，这一步会失败而不是覆盖历史。
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" "$DMG" "$DMG.sha256" \
+            --title "Aural $VERSION — Development Preview" \
+            --notes-file "$NOTES" \
+            --prerelease \
+            --verify-tag

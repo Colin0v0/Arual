@@ -9,7 +9,7 @@ final class StatusPanelController: NSObject {
     private let popup: StatusPopupPanel
     private let statusItem: NSStatusItem
     private let model: AppModel
-    private var settingsWindow: NSWindow?
+    private var settingsWindow: SettingsWindow?
     private let popupLayout = PanelPresentationLayout()
     private let popupSizeAnimator = PanelSizeAnimator()
     private var popupTopLeft = CGPoint.zero
@@ -88,8 +88,9 @@ final class StatusPanelController: NSObject {
         hidePopup()
         if settingsWindow == nil {
             let size = SettingsMetrics.size
-            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+            let window = SettingsWindow(contentRect: NSRect(origin: .zero, size: size),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            window.delegate = self
             window.title = settingsWindowTitle
             window.isReleasedWhenClosed = false
             let host = NSHostingController(rootView: SettingsView(model: model, settings: AppSettings.shared))
@@ -103,6 +104,8 @@ final class StatusPanelController: NSObject {
         updateSettingsWindowTitle()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // 激活后清除系统自动选中的首个控件，仍允许用户主动使用 Tab 导航。
+        settingsWindow?.makeFirstResponder(nil)
     }
 
     private func updatePopupSize(_ size: CGSize) {
@@ -276,6 +279,9 @@ extension StatusPanelController: NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === popup { hidePopup(); return }
+        if notification.object as? NSWindow === settingsWindow {
+            AuralUpdateChecker.shared.resetSettingsPresentation()
+        }
     }
 }
 /// 顶栏 44、标签区 36、页脚 34；显示时按当前屏幕的可用高度限制外框。

@@ -63,6 +63,22 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
     let setMuted: (Bool) -> Void
     var selectionHint: String? = nil
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover: PanelRowHoverState
+
+    /// 产品默认从非悬停态开始；快照测试可以显式构造悬停首帧，验证完整行效果。
+    init(device: Device, control: AudioDeviceControlState, selected: Bool,
+         select: @escaping () -> Void, setVolume: @escaping (Float) -> Void,
+         setMuted: @escaping (Bool) -> Void, selectionHint: String? = nil,
+         initiallyHovered: Bool = false) {
+        self.device = device
+        self.control = control
+        self.selected = selected
+        self.select = select
+        self.setVolume = setVolume
+        self.setMuted = setMuted
+        self.selectionHint = selectionHint
+        _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
+    }
 
     private func muteDescription(_ mute: AudioDeviceMute) -> String {
         guard let muted = mute.muted else { return L10n.text("设备未公开静音状态", language: language) }
@@ -78,7 +94,7 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
         HStack(spacing: 10) {
             Button(action: select) {
                 HStack(spacing: 8) {
-                    AudioDeviceIcon(symbol: device.symbol, selected: selected)
+                    AudioDeviceIcon(symbol: device.symbol, selected: selected, highlighted: hover.active)
                     Text(device.name).lineLimit(1).foregroundStyle(PanelStyle.ink)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,6 +146,8 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
         .padding(.horizontal, 12).padding(.vertical, 6)
         .frame(height: PanelMetrics.deviceRowHeight)
         .font(PanelStyle.bodyFont)
+        .panelRowHover(hover.active)
+        .onHover { hover.active = $0 }
     }
 }
 
@@ -137,12 +155,15 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
 struct AudioDeviceIcon: View {
     let symbol: String
     let selected: Bool
+    var highlighted = false
 
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: 13, weight: .regular))
-            .foregroundStyle(selected ? Color.white : PanelStyle.secondary)
+            .foregroundStyle(selected ? Color.white : (highlighted ? PanelStyle.ink : PanelStyle.secondary))
             .frame(width: 28, height: 28)
-            .background(selected ? PanelStyle.accent : PanelStyle.surface, in: Circle())
+            // 设备已选中时保留功能色；悬停只提升中性灰表面，不额外叠一层品牌色。
+            .background(selected ? PanelStyle.accent : (highlighted ? PanelStyle.iconHover : PanelStyle.surface),
+                        in: Circle())
     }
 }

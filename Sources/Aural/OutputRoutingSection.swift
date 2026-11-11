@@ -283,6 +283,7 @@ private struct SimultaneousOutputDeviceRow: View {
     let setVolume: (Float) -> Void
     let setMuted: (Bool) -> Void
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover = PanelRowHoverState()
 
     private func muteDescription(_ mute: AudioDeviceMute) -> String {
         guard let muted = mute.muted else { return L10n.text("设备未公开静音状态", language: language) }
@@ -297,14 +298,18 @@ private struct SimultaneousOutputDeviceRow: View {
         HStack(spacing: 10) {
             Button(action: toggle) {
                 HStack(spacing: 8) {
+                    // 勾选图标表达真实路由状态，继续使用功能色；悬停本身不改变它。
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 13))
                         .foregroundStyle(selected ? PanelStyle.accent : PanelStyle.secondary)
                     Image(systemName: output.symbol)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(selected ? PanelStyle.accent : PanelStyle.secondary)
+                        // 输出图标只在悬停时提高中性灰对比，不出现蓝色悬停高亮。
+                        .foregroundStyle(selected ? PanelStyle.accent
+                                         : (hover.active ? PanelStyle.ink : PanelStyle.secondary))
                         .frame(width: 22, height: 22)
-                        .background(PanelStyle.iconSurface, in: RoundedRectangle(cornerRadius: 5))
+                        .background(hover.active ? PanelStyle.iconHover : PanelStyle.iconSurface,
+                                    in: RoundedRectangle(cornerRadius: 5))
                     Text(output.name)
                         .lineLimit(1)
                         .minimumScaleFactor(0.9)
@@ -367,6 +372,8 @@ private struct SimultaneousOutputDeviceRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: PanelMetrics.deviceRowHeight)
+        .panelRowHover(hover.active, cornerRadius: 6)
+        .onHover { hover.active = $0 }
     }
 }
 
@@ -388,6 +395,7 @@ struct SimultaneousOutputRow: View {
     let setVolume: (Float) -> Void
     let setMuted: (Bool) -> Void
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover = PanelRowHoverState()
 
     var body: some View {
         Group {
@@ -444,11 +452,13 @@ struct SimultaneousOutputRow: View {
         }
         .frame(height: PanelMetrics.deviceRowHeight)
         .font(PanelStyle.bodyFont)
+        .panelRowHover(hover.active)
+        .onHover { hover.active = $0 }
     }
 
     private var identity: some View {
         HStack(spacing: 8) {
-            AudioDeviceIcon(symbol: "rectangle.on.rectangle", selected: selected)
+            AudioDeviceIcon(symbol: "rectangle.on.rectangle", selected: selected, highlighted: hover.active)
             Text(title).lineLimit(1).foregroundStyle(PanelStyle.ink)
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))

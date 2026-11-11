@@ -31,7 +31,7 @@ enum AuralUpdateInstaller {
         let extracted = stage.appendingPathComponent("extracted", isDirectory: true)
         try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
         let paths = Paths(stage: stage,
-                          archive: stage.appendingPathComponent("Aural-\(update.version).zip"),
+                          archive: stage.appendingPathComponent("Aural-\(update.version).\(update.archiveKind.rawValue)"),
                           extracted: extracted,
                           payload: stage.appendingPathComponent("payload", isDirectory: true),
                           oldBundle: stage.appendingPathComponent("old", isDirectory: true))
@@ -41,24 +41,20 @@ enum AuralUpdateInstaller {
 
     static func verifyAndPrepareDownloadedArchive(update: AuralAvailableUpdate,
                                                    paths: Paths) throws {
-        let attributes = try FileManager.default.attributesOfItem(atPath: paths.archive.path)
-        let fileSize = (attributes[.size] as? NSNumber)?.intValue ?? -1
-        guard fileSize == update.assetSize else {
-            try? FileManager.default.removeItem(at: paths.archive)
-            throw AuralUpdateError.archiveSizeMismatch
-        }
         let digest = try AuralSHA256.hexDigest(at: paths.archive)
         guard digest == update.sha256 else {
             try? FileManager.default.removeItem(at: paths.archive)
             throw AuralUpdateError.checksumMismatch
         }
-        try extract(archive: paths.archive, to: paths.extracted)
-        let appBundles = try FileManager.default.contentsOfDirectory(at: paths.extracted,
-                                                                     includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension.lowercased() == "app" }
-        guard appBundles.count == 1, let appBundle = appBundles.first else {
-            throw AuralUpdateError.invalidArchive
+        let appBundle: URL?
+        switch update.archiveKind {
+        case .dmg:
+            appBundle = try extractAppFromDMG(paths.archive, to: paths.extracted)
+        case .zip:
+            // 仅为升级安装旧版保留；新建发布和自动更新默认使用 DMG。
+            appBundle = try extractAppFromZIP(paths.archive, to: paths.extracted)
         }
+        guard let appBundle else { throw AuralUpdateError.invalidArchive }
         try validateBundle(at: appBundle, expectedVersion: update.version)
         try? FileManager.default.removeItem(at: paths.payload)
         try FileManager.default.moveItem(at: appBundle, to: paths.payload)
@@ -152,7 +148,7 @@ enum AuralUpdateInstaller {
     private static func currentPaths(version: String) -> Paths {
         let stage = stageURL
         return Paths(stage: stage,
-                     archive: stage.appendingPathComponent("Aural-\(version).zip"),
+                     archive: stage.appendingPathComponent("Aural-\(version).dmg"),
                      extracted: stage.appendingPathComponent("extracted", isDirectory: true),
                      payload: stage.appendingPathComponent("payload", isDirectory: true),
                      oldBundle: stage.appendingPathComponent("old", isDirectory: true))
@@ -168,10 +164,38 @@ enum AuralUpdateInstaller {
         try data.write(to: paths.stage.appendingPathComponent("metadata.plist"), options: .atomic)
     }
 
-    private static func extract(archive: URL, to directory: URL) throws {
+    /// DMG 是新的更新包格式；只读挂载后复制 Aural.app，避免执行镜像内的其他内容。
+    private static func extractAppFromDMG(_ archive: URL, to directory: URL) throws -> URL? {
+        try? FileManager.default.removeItem(at: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let mount = directory.appendingPathComponent("mount", isDirectory: true)
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+        _ = try runProcess("/usr/bin/hdiutil",
+                           ["attach", archive.path, "-mountpoint", mount.path,
+                            "-nobrowse", "-noautoopen", "-readonly", "-quiet"])
+        defer { _ = try? runProcess("/usr/bin/hdiutil", ["detach", mount.path, "-quiet"]) }
+
+        let appBundles = try FileManager.default.contentsOfDirectory(at: mount,
+                                                                     includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension.lowercased() == "app" }
+        guard appBundles.count == 1, let appBundle = appBundles.first else {
+            return nil
+        }
+        let destination = directory.appendingPathComponent(appBundle.lastPathComponent)
+        _ = try runProcess("/usr/bin/ditto", [appBundle.path, destination.path])
+        return destination
+    }
+
+    /// 只有旧版发布才会走到这里；解压仍然只接受唯一一个 .app。
+    private static func extractAppFromZIP(_ archive: URL, to directory: URL) throws -> URL? {
         try? FileManager.default.removeItem(at: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         _ = try runProcess("/usr/bin/ditto", ["-x", "-k", archive.path, directory.path])
+        let appBundles = try FileManager.default.contentsOfDirectory(at: directory,
+                                                                     includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension.lowercased() == "app" }
+        guard appBundles.count == 1 else { return nil }
+        return appBundles[0]
     }
 
     private static func runProcess(_ executable: String, _ arguments: [String]) throws -> String {

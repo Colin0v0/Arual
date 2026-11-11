@@ -15,6 +15,29 @@ struct ApplicationMixerRow: View {
     let applyConfiguration: () -> Void
     let stopManaging: () -> Void
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover: PanelRowHoverState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 真实应用行默认静止；视觉快照可显式打开首帧悬停，不依赖合成鼠标事件。
+    init(app: ApplicationAudioRow, state: ApplicationMixState,
+         levelSource: ApplicationLevelSource, metersVisible: Bool,
+         awaitingStream: Bool, status: String, toggleMute: @escaping () -> Void,
+         setGain: @escaping (Float) -> Void, retryMeter: @escaping () -> Void,
+         applyConfiguration: @escaping () -> Void, stopManaging: @escaping () -> Void,
+         initiallyHovered: Bool = false) {
+        self.app = app
+        self.state = state
+        self.levelSource = levelSource
+        self.metersVisible = metersVisible
+        self.awaitingStream = awaitingStream
+        self.status = status
+        self.toggleMute = toggleMute
+        self.setGain = setGain
+        self.retryMeter = retryMeter
+        self.applyConfiguration = applyConfiguration
+        self.stopManaging = stopManaging
+        _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
+    }
 
     var body: some View {
         // 全部控件保持一排，真实错误放入同行标记、悬停和菜单，不再额外撑出第二行。
@@ -64,6 +87,10 @@ struct ApplicationMixerRow: View {
             PanelPercentage(value: state.gain)
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
+        .panelRowHover(hover.active)
+        .onHover { hover.active = $0 }
+        // 应用行内部有单独的静音、滑杆悬停；整行底色用更短缓动跟随鼠标，避免两层反馈错拍。
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hover.active)
         .help(state.failure.map { L10n.text($0, language: language) }
               ?? L10n.format("%@；右键打开应用操作", language: language, arguments: [status]))
         .contextMenu { options }

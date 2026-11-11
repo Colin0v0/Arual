@@ -29,6 +29,27 @@ enum PanelStyle {
     static let prominentFill = adaptive(light: NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
                                         dark: NSColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1))
     static let prominentInk = adaptive(light: .white, dark: NSColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1))
+    /// 更新入口使用独立的紫色语义，避免和输出设备选中的系统蓝色混在一起。
+    static let updateFill = adaptive(light: NSColor(red: 0.957, green: 0.949, blue: 1, alpha: 1),
+                                     dark: NSColor(red: 0.19, green: 0.17, blue: 0.29, alpha: 1))
+    static let updateBorder = adaptive(light: NSColor(red: 0.84, green: 0.81, blue: 0.97, alpha: 1),
+                                       dark: NSColor(red: 0.39, green: 0.35, blue: 0.60, alpha: 1))
+    static let updateInk = adaptive(light: NSColor(red: 0.33, green: 0.27, blue: 0.83, alpha: 1),
+                                    dark: NSColor(red: 0.73, green: 0.68, blue: 1, alpha: 1))
+    static let updateSolid = adaptive(light: NSColor(red: 0.34, green: 0.27, blue: 0.87, alpha: 1),
+                                      dark: NSColor(red: 0.44, green: 0.36, blue: 1, alpha: 1))
+    static let updateSolidInk = Color.white
+    /// 悬停只做中性灰的层次变化，不用蓝色染色抢占设备选中态和功能色。
+    /// 浅色用黑灰提亮，深色用白灰提亮，两者保持一致的视觉重量。
+    static let rowHover = adaptive(light: NSColor(white: 0, alpha: 0.055),
+                                   dark: NSColor(white: 1, alpha: 0.075))
+    static let rowHoverBorder = adaptive(light: NSColor(white: 0, alpha: 0.08),
+                                         dark: NSColor(white: 1, alpha: 0.10))
+    /// 阴影只落在行的圆角底板下方，不包住文字，避免悬停时出现模糊字形。
+    static let rowHoverGlow = adaptive(light: NSColor(white: 0, alpha: 0.06),
+                                       dark: NSColor(white: 0, alpha: 0.18))
+    static let iconHover = adaptive(light: NSColor(white: 0.92, alpha: 1),
+                                    dark: NSColor(white: 1, alpha: 0.10))
     static let error = adaptive(light: NSColor(red: 0.69, green: 0.20, blue: 0.20, alpha: 1),
                                 dark: NSColor(red: 1.0, green: 0.42, blue: 0.42, alpha: 1))
     static let radius: CGFloat = 11
@@ -224,6 +245,45 @@ struct PanelError: View {
             .foregroundStyle(PanelStyle.error)
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
+    }
+}
+
+/// 列表行与设置行共用同一套悬停状态，避免每处自行决定底色、圆角和动画时长。
+@MainActor
+final class PanelRowHoverState: ObservableObject {
+    @Published var active: Bool
+
+    /// 默认从静止态开始；截图测试可显式传入悬停态，产品交互仍只由真实鼠标进入/离开驱动。
+    init(active: Bool = false) {
+        self.active = active
+    }
+}
+
+/// 整行悬停使用中性灰底板、细描边和低位阴影。
+/// 不使用位移或缩放，鼠标扫过时文字与滑杆保持原位，不会产生布局抖动。
+private struct PanelRowHoverModifier: ViewModifier {
+    let active: Bool
+    let cornerRadius: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(active ? PanelStyle.rowHover : Color.clear)
+                    .shadow(color: active ? PanelStyle.rowHoverGlow : .clear, radius: 3, y: 1)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(active ? PanelStyle.rowHoverBorder : Color.clear, lineWidth: 1)
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: active)
+    }
+}
+
+extension View {
+    func panelRowHover(_ active: Bool, cornerRadius: CGFloat = 8) -> some View {
+        modifier(PanelRowHoverModifier(active: active, cornerRadius: cornerRadius))
     }
 }
 

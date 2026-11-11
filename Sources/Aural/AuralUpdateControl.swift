@@ -7,78 +7,13 @@ struct AuralUpdateCapsule: View {
 
     var body: some View {
         if let update = updates.availableUpdate {
-            HStack(spacing: 0) {
-                Button(action: primaryAction) {
-                    HStack(spacing: 4) {
-                        if isBusy {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .scaleEffect(0.72)
-                                .frame(width: 12, height: 12)
-                                .tint(.white)
-                        } else {
-                            Image(systemName: iconName)
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        Text(title)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                    }
-                    .padding(.leading, 9)
-                    .padding(.trailing, 7)
-                    .frame(height: 24)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(isBusy)
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.28))
-                    .frame(width: 1, height: 13)
-
-                Button(action: updates.skipAvailableUpdate) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .frame(width: 21, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(settings.localizedFormat("跳过 %@", update.version))
-                .accessibilityLabel(settings.localizedFormat("跳过 %@", update.version))
-            }
-            .foregroundStyle(Color.white)
-            .background(Capsule().fill(PanelStyle.accent))
-            .fixedSize()
+            AuralUpdateBadge(phase: updates.phase,
+                             version: update.version,
+                             language: settings.resolvedLanguage,
+                             action: primaryAction,
+                             skip: updates.skipAvailableUpdate)
             .help(helpText(update: update))
-        }
-    }
-
-    private var isBusy: Bool {
-        switch updates.phase {
-        case .downloading, .preparing: return true
-        case .idle, .available, .ready, .failed: return false
-        }
-    }
-
-    private var title: String {
-        switch updates.phase {
-        case .available: return settings.localized("更新")
-        case .downloading(let progress):
-            guard progress > 0 else { return settings.localized("下载中") }
-            return "\(Int((progress * 100).rounded()))%"
-        case .preparing: return settings.localized("准备中")
-        case .ready: return settings.localized("重启以更新")
-        case .failed: return settings.localized("重试更新")
-        case .idle: return settings.localized("更新")
-        }
-    }
-
-    private var iconName: String {
-        switch updates.phase {
-        case .available, .idle: return "arrow.down"
-        case .downloading, .preparing: return "arrow.down"
-        case .ready: return "arrow.clockwise"
-        case .failed: return "exclamationmark.triangle.fill"
+            .accessibilityLabel(settings.localizedFormat("更新到 %@", update.version))
         }
     }
 
@@ -98,5 +33,123 @@ struct AuralUpdateCapsule: View {
             return settings.localizedFormat("更新到 %@ 失败：%@", update.version, error)
         }
         return settings.localizedFormat("更新到 %@", update.version)
+    }
+}
+/// 更新胶囊只表达状态；网络、校验和安装逻辑仍由 AuralUpdateChecker 持有。
+struct AuralUpdateBadge: View {
+    let phase: AuralUpdatePhase
+    let version: String
+    let language: AppLanguage
+    let action: () -> Void
+    let skip: () -> Void
+    @StateObject private var hover = HoverState()
+    private final class HoverState: ObservableObject {
+        @Published var active = false
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 12)
+            .frame(height: 25)
+            .background(Capsule().fill(fill))
+            .overlay { Capsule().strokeBorder(border, lineWidth: 1) }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        // 忙碌状态仍要清晰可读；action 本身会忽略下载和准备阶段的点击。
+        .allowsHitTesting(!isBusy)
+        .accessibilityValue(isBusy ? L10n.text("进行中", language: language) : "")
+        .onHover { hover.active = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover.active)
+        .overlay(alignment: .topTrailing) {
+            if canSkip {
+                Button(action: skip) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(PanelStyle.secondary)
+                        .frame(width: 14, height: 14)
+                        .background(PanelStyle.surface, in: Circle())
+                        .overlay { Circle().strokeBorder(PanelStyle.line, lineWidth: 1) }
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(L10n.format("跳过 %@", language: language, arguments: [version]))
+                .accessibilityLabel(L10n.format("跳过 %@", language: language, arguments: [version]))
+                // 关闭入口只在胶囊右上角轻微外露，不占据正文高度。
+                .offset(x: 5, y: -5)
+            }
+        }
+        // 叉号超出胶囊时不能被裁切；只有可跳过状态才占用视觉空间。
+        .padding(.top, canSkip ? 5 : 0)
+        .padding(.trailing, canSkip ? 5 : 0)
+    }
+
+    private var canSkip: Bool { Self.showsDismiss(phase) }
+
+    /// 只有用户可决定“暂不更新”的静止状态才显示关闭入口。
+    static func showsDismiss(_ phase: AuralUpdatePhase) -> Bool {
+        switch phase {
+        case .available, .failed: return true
+        case .downloading, .preparing, .ready, .idle: return false
+        }
+    }
+
+    private var isBusy: Bool {
+        switch phase {
+        case .downloading, .preparing: return true
+        case .available, .ready, .failed, .idle: return false
+        }
+    }
+
+    private var solid: Bool {
+        if case .ready = phase { return true }
+        if case .failed = phase { return false }
+        return hover.active && !isBusy
+    }
+
+    private var fill: Color {
+        if case .failed = phase { return PanelStyle.error.opacity(0.08) }
+        return solid ? PanelStyle.updateSolid : PanelStyle.updateFill
+    }
+
+    private var border: Color {
+        if case .failed = phase { return PanelStyle.error.opacity(0.35) }
+        return solid ? PanelStyle.updateSolid : PanelStyle.updateBorder
+    }
+
+    private var foreground: Color {
+        if case .failed = phase { return PanelStyle.error }
+        return solid ? PanelStyle.updateSolidInk : PanelStyle.updateInk
+    }
+
+    private var iconName: String {
+        if case .failed = phase { return "arrow.clockwise" }
+        return "arrow.up"
+    }
+
+    private var title: String {
+        switch phase {
+        case .available, .idle:
+            return L10n.text("更新", language: language)
+        case .downloading(let progress):
+            let percent = Int((progress * 100).rounded())
+            return percent > 0
+                ? L10n.format("正在下载 %d%%", language: language, arguments: [percent])
+                : L10n.text("正在下载…", language: language)
+        case .preparing:
+            return L10n.text("更新中…", language: language)
+        case .ready:
+            return L10n.text("重启以更新", language: language)
+        case .failed:
+            return L10n.text("重试更新", language: language)
+        }
     }
 }
