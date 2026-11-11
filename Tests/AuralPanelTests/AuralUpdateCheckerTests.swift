@@ -59,7 +59,7 @@ struct AuralUpdateCheckerTests {
         }
     }
 
-    @Test func skippedVersionHidesOnlyThatVersion() throws {
+    @Test func skippedVersionHidesAutomaticPromptButManualCheckRevealsIt() throws {
         let currentData = try atomFeed([release("0.1.11")])
         let newerData = try atomFeed([release("0.1.12")])
         let currentUpdate = try #require(
@@ -71,9 +71,26 @@ struct AuralUpdateCheckerTests {
                                                 repository: repository)
         )
 
-        #expect(!AuralUpdateChecker.shouldPresent(update: currentUpdate, skippedVersion: "0.1.11"))
-        #expect(AuralUpdateChecker.shouldPresent(update: newerUpdate, skippedVersion: "0.1.11"))
-        #expect(AuralUpdateChecker.shouldPresent(update: currentUpdate, skippedVersion: nil))
+        #expect(!AuralUpdateChecker.shouldPresent(
+            update: currentUpdate,
+            skippedVersion: "0.1.11",
+            manualCheck: false
+        ))
+        #expect(AuralUpdateChecker.shouldPresent(
+            update: currentUpdate,
+            skippedVersion: "0.1.11",
+            manualCheck: true
+        ))
+        #expect(AuralUpdateChecker.shouldPresent(
+            update: newerUpdate,
+            skippedVersion: "0.1.11",
+            manualCheck: false
+        ))
+        #expect(AuralUpdateChecker.shouldPresent(
+            update: currentUpdate,
+            skippedVersion: nil,
+            manualCheck: false
+        ))
     }
 
     @Test func sha256MatchesKnownFileContent() throws {
