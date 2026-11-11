@@ -100,7 +100,11 @@ hdiutil detach "$MOUNT_DIR" -quiet
 MOUNT_DIR=""
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$OUTPUT" -ov -quiet
 hdiutil verify "$OUTPUT" >/dev/null
-shasum -a 256 "$OUTPUT" > "$OUTPUT.sha256"
+# 校验文件只写下载后的文件名；写成 dist/... 会让发布页命令在用户目录中找不到目标。
+(
+    cd dist
+    shasum -a 256 "$(basename "$OUTPUT")" > "$(basename "$OUTPUT").sha256"
+)
 
 trap - EXIT
 cleanup

@@ -11,7 +11,11 @@ DMG="dist/Aural-${VERSION}-macOS-${ARCH}.dmg"
 ZIP="dist/Aural-${VERSION}-macOS-${ARCH}.zip"
 rm -f "$ZIP"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-shasum -a 256 "$ZIP" > "$ZIP.sha256"
+# SHA-256 文件必须能直接放到用户下载目录执行，因此只记录资产文件名。
+(
+    cd dist
+    shasum -a 256 "$(basename "$ZIP")" > "$(basename "$ZIP").sha256"
+)
 
 # 更新包必须同时验证标准 bundle 结构、外层签名和真实启动，避免再次发布启动即崩溃的安装包。
 CHECK="$(mktemp -d "${TMPDIR:-/tmp}/aural-legacy-zip.XXXXXX")"
@@ -50,7 +54,10 @@ test -d "$CHECK/Aural.app"
 cmp "$APP/Contents/Info.plist" "$CHECK/Aural.app/Contents/Info.plist"
 cmp "$APP/Contents/MacOS/Aural" "$CHECK/Aural.app/Contents/MacOS/Aural"
 verify_app "$CHECK/Aural.app"
-shasum -a 256 -c "$ZIP.sha256"
+(
+    cd dist
+    shasum -a 256 -c "$(basename "$ZIP").sha256"
+)
 
 # DMG 也必须从真实挂载内容验证，不能只相信构建目录中的 app。
 DMG_MOUNT="$CHECK/dmg"
@@ -65,5 +72,8 @@ verify_app "$DMG_APP"
 hdiutil detach "$DMG_MOUNT" -quiet
 DMG_ATTACHED=0
 
-shasum -a 256 -c "$DMG.sha256"
+(
+    cd dist
+    shasum -a 256 -c "$(basename "$DMG").sha256"
+)
 printf '发布资产已生成：DMG + 旧版更新 ZIP + 各自 SHA-256（%s）。\n' "$VERSION"
