@@ -89,6 +89,12 @@ struct HeadphoneSection: View {
                 }
             }
             Spacer()
+            if controller.state.isCharging == true {
+                // 仅在耳机明确报告充电时显示，未读取不等于未充电。
+                Image(systemName: "bolt.fill")
+                    .foregroundStyle(PanelStyle.secondary)
+                    .accessibilityLabel(L10n.text("正在充电", language: language))
+            }
             if let battery = controller.state.battery {
                 // 不用假的满电图标表达电量，百分比完全来自耳机的确认响应。
                 Text("\(battery)%").monospacedDigit().foregroundStyle(PanelStyle.secondary)

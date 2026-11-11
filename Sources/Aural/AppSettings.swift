@@ -281,6 +281,7 @@ enum L10n {
         "耳机噪声控制": "Headphone Noise Control",
         "该耳机尚未确认噪声控制能力": "Noise control capability has not been confirmed",
         "正在断开耳机": "Disconnecting headphones",
+        "正在充电": "Charging",
         "耳机电量 %d%%": "Headphone battery %d%%",
         "无法确定当前耳机，请重新扫描": "Unable to identify the current headphones. Scan again.",
         "耳机控制尚未连接": "Headphone controls are not connected",

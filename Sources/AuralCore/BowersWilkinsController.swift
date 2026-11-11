@@ -380,8 +380,8 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     }
 
     private func enqueueReads() {
-        // 没有核实线值的型号只读电量，不猜 ANC 的数字含义。
-        let reads = noiseProfile == .unverified ? [BWRPCatalog.batteryGet] : BWRPCatalog.primaryReads
+        // 没有核实线值的型号只读取电量与充电状态，不猜 ANC 的数字含义。
+        let reads = noiseProfile == .unverified ? BWRPCatalog.batteryReads : BWRPCatalog.primaryReads
         queue = reads.map { Request(command: $0, payload: nil, purpose: .refresh) }
         sendNext()
     }
@@ -446,12 +446,16 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
                 identityVerified = true
                 trace("PHYSICAL ADDRESS VERIFIED")
                 phase = .ready
-                let reads = noiseProfile == .unverified ? [BWRPCatalog.batteryGet] : BWRPCatalog.primaryReads
+                let reads = noiseProfile == .unverified ? BWRPCatalog.batteryReads : BWRPCatalog.primaryReads
                 queue = reads.map { Request(command: $0, payload: nil, purpose: .refresh) }
             case .refresh:
                 if try !state.applyRefresh(reply, profile: noiseProfile) {
-                    errorMessage = "该耳机未确认降噪读取能力（错误 \(reply.errorCode)），仅提供已确认的电量"
-                    trace("ANC CAPABILITY NOT CONFIRMED")
+                    if reply.command == BWRPCatalog.ancGet {
+                        errorMessage = "该耳机未确认降噪读取能力（错误 \(reply.errorCode)）"
+                        trace("ANC CAPABILITY NOT CONFIRMED")
+                    } else {
+                        trace("CHARGING CAPABILITY NOT CONFIRMED")
+                    }
                 }
             case .setNoise(let desired):
                 guard reply.succeeded else { throw AudioFailure("耳机拒绝噪声模式设置（错误 \(reply.errorCode)）") }
