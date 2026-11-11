@@ -12,6 +12,16 @@ struct AppleHeadphoneHALTests {
         #expect(AppleHeadphoneHAL.wornState(primary: 1, secondary: 9) == nil)
     }
 
+    @Test func onlyConfirmedBilateralPlacementOpensModeControls() {
+        #expect(AppleHeadphoneHAL.wearState(primary: 1, secondary: 1) == .bothEars)
+        #expect(AppleHeadphoneHAL.wearState(primary: 1, secondary: 2) == .singleEar)
+        #expect(AppleHeadphoneHAL.wearState(primary: 3, secondary: 1) == .singleEar)
+        #expect(AppleHeadphoneHAL.wearState(primary: 2, secondary: 3) == .notWorn)
+        #expect(AppleHeadphoneHAL.wearState(primary: 1, secondary: 0) == .unknown)
+        #expect(AppleHeadphoneHAL.wearState(primary: 0, secondary: 1) == .unknown)
+        #expect(AppleHeadphoneHAL.wearState(primary: 1, secondary: 9) == .unknown)
+    }
+
     @Test func supportMaskExposesOnlyAdvertisedListeningModes() {
         // 原始线值 3 表示当前正在透传；能力位 7 同时公开降噪、透传和自适应。
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 3)

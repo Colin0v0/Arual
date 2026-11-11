@@ -118,6 +118,9 @@ enum L10n {
     }
 
     private static let english: [String: String] = [
+        "左 %d%%": "L %d%%",
+        "右 %d%%": "R %d%%",
+        "盒 %d%%": "Case %d%%",
         "正在切换音频路由…": "Switching the audio route…",
         "未佩戴，戴回后恢复控制": "Not worn. Controls resume when worn again.",
         "等待佩戴": "Waiting to be worn",

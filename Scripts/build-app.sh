@@ -22,8 +22,13 @@ case "$UPDATE_REPOSITORY" in
     *) echo "无法从 origin 识别 GitHub 仓库：$REMOTE_URL" >&2; exit 1 ;;
 esac
 /usr/libexec/PlistBuddy -c "Add :AuralUpdateRepository string $UPDATE_REPOSITORY" "$APP/Contents/Info.plist"
-# SwiftPM 的资源包承载从平面图标抠出的品牌模板，必须随可执行文件一起进入 App。
-ditto "$BIN_DIR/Aural_Aural.bundle" "$APP/Contents/Resources/Aural_Aural.bundle"
+# SwiftPM 在部分工具链上会把资源包输出成平面目录，导致 Bundle.module 无法识别。
+# 这里不复制工具链产物，而是从源码资源确定性地构造标准 macOS bundle 结构。
+RESOURCE_BUNDLE="$APP/Contents/Resources/Aural_Aural.bundle"
+rm -rf "$RESOURCE_BUNDLE"
+mkdir -p "$RESOURCE_BUNDLE/Contents/Resources"
+cp Resources/Aural_Aural.bundle/Contents/Info.plist "$RESOURCE_BUNDLE/Contents/Info.plist"
+cp -R Sources/Aural/Resources/. "$RESOURCE_BUNDLE/Contents/Resources/"
 # 品牌图标必须随应用包一起复制，Finder 与 Dock 才能读取用户指定的 App 图标。
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # 许可声明是分发必需品；缺失时构建失败，不生成缺声明的应用。

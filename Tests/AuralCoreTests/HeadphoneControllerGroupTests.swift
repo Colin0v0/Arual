@@ -151,7 +151,7 @@ private final class GroupHardwareFixture {
             snapshot: { deviceID in
                 let mode = try #require(self.modes[deviceID])
                 return AppleHeadphoneSnapshot(noiseMode: mode,
-                    supportedNoiseModes: [.off, .cancellation, .transparency])
+                    supportedNoiseModes: [.off, .cancellation, .transparency], wearState: .bothEars)
             }, requestMode: { mode, output in
                 if self.failedUID == output.uid { throw AudioFailure("该耳机控制写入失败") }
                 self.writes.append(output.uid)

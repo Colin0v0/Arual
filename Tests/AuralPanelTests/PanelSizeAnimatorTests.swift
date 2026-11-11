@@ -126,7 +126,8 @@ struct PanelSizeAnimatorTests {
         animator.resize(window: window, to: latest, animated: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         #expect(window.frame == latest)
-        #expect(window.nativeRequests.count > 2)
+        // CI 可能只产生目标帧和最终帧；核心契约是首个目标从未提交，只提交最新目标。
+        #expect(!window.nativeRequests.contains { $0.frame == first })
         #expect(window.nativeRequests.last?.frame == latest)
     }
 

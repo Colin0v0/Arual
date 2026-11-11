@@ -11,7 +11,7 @@ struct HeadphoneSectionLayoutTests {
             HeadphoneController(appleHardware: AppleHeadphoneHardware(
                 isSupported: { _ in true }, validateTarget: { _ in },
                 snapshot: { _ in AppleHeadphoneSnapshot(noiseMode: .transparency,
-                    supportedNoiseModes: [.cancellation, .transparency]) },
+                    supportedNoiseModes: [.cancellation, .transparency], wearState: .bothEars) },
                 requestMode: { _, _ in Issue.record("渲染卡片不得写入模式") },
                 waitForReadback: { await Task.yield() }))
         })
@@ -31,6 +31,44 @@ struct HeadphoneSectionLayoutTests {
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: "/tmp/aural-headphones-stacked.png"))
         group.shutdown()
+    }
+
+    @Test @MainActor func restrictedAppleWearStatesKeepOnlyHeaderAndBattery() throws {
+        var wear = AppleHeadphoneWearState.bothEars
+        let controller = HeadphoneController(appleHardware: AppleHeadphoneHardware(
+            isSupported: { _ in true }, validateTarget: { _ in },
+            snapshot: { _ in AppleHeadphoneSnapshot(noiseMode: .transparency,
+                supportedNoiseModes: [.cancellation, .transparency, .adaptive], wearState: wear) },
+            requestMode: { _, _ in Issue.record("布局验证不得切换耳机模式") },
+            waitForReadback: { await Task.yield() },
+            battery: { _ in AppleHeadphoneBattery(left: 97, right: 90, caseLevel: 89) }))
+        let output = AudioOutput(id: 11, uid: "fixture-apple", name: "Podssss", transport: kAudioDeviceTransportTypeBluetooth)
+        var restrictedHeight: CGFloat?
+        for state in [AppleHeadphoneWearState.singleEar, .notWorn, .unknown, .bothEars] {
+            wear = state
+            controller.updateOutput(output)
+            let host = NSHostingView(rootView: HeadphoneSection(controller: controller, output: output)
+                .frame(width: PanelMetrics.contentWidth)
+                .background(PanelStyle.canvas)
+                .environment(\.appLanguage, .chinese)
+                .environment(\.colorScheme, .light))
+            host.appearance = NSAppearance(named: .aqua)
+            host.frame.size = host.fittingSize
+            PanelTestSupport.flushLayout(host)
+            if state == .bothEars {
+                #expect(host.fittingSize.height > (try #require(restrictedHeight)) + 20)
+            } else {
+                #expect(host.fittingSize.height < 80)
+                if let restrictedHeight { #expect(host.fittingSize.height == restrictedHeight) }
+                else { restrictedHeight = host.fittingSize.height }
+            }
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try #require(bitmap.representation(using: .png, properties: [:]))
+            let name = state == .bothEars ? "both-ears" : "restricted"
+            try png.write(to: URL(fileURLWithPath: "/tmp/aural-apple-\(name).png"))
+        }
+        controller.shutdown()
     }
 
     /// 不支持的当前输出只显示耳机标题和连接按钮，删除说明文字后也不再保留空详情区域。

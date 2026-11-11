@@ -8,15 +8,18 @@ public struct AppleHeadphoneHardware {
     public var validateTarget: (AudioOutput) throws -> Void
     public var snapshot: (AudioDeviceID) throws -> AppleHeadphoneSnapshot
     public var requestMode: (NoiseMode, AudioOutput) throws -> Void
+    public var battery: (AudioOutput) throws -> AppleHeadphoneBattery?
     public var waitForReadback: () async throws -> Void
 
     public init(isSupported: @escaping (AudioDeviceID) -> Bool,
                 validateTarget: @escaping (AudioOutput) throws -> Void,
                 snapshot: @escaping (AudioDeviceID) throws -> AppleHeadphoneSnapshot,
                 requestMode: @escaping (NoiseMode, AudioOutput) throws -> Void,
-                waitForReadback: @escaping () async throws -> Void) {
+                waitForReadback: @escaping () async throws -> Void,
+                battery: @escaping (AudioOutput) throws -> AppleHeadphoneBattery? = { _ in nil }) {
         self.isSupported = isSupported; self.validateTarget = validateTarget
         self.snapshot = snapshot; self.requestMode = requestMode; self.waitForReadback = waitForReadback
+        self.battery = battery
     }
 
     public static var live: Self {
@@ -24,6 +27,7 @@ public struct AppleHeadphoneHardware {
              validateTarget: AppleHeadphoneHAL.validateControlTarget,
              snapshot: AppleHeadphoneHAL.snapshot,
              requestMode: AppleHeadphoneHAL.requestNoiseMode,
-             waitForReadback: { try await Task.sleep(for: .milliseconds(50)) })
+             waitForReadback: { try await Task.sleep(for: .milliseconds(50)) },
+             battery: { try AppleHeadphoneBatteryStore.shared.battery(for: $0) })
     }
 }
