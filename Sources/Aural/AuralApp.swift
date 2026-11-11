@@ -71,11 +71,17 @@ struct AuralApp: App {
     @NSApplicationDelegateAdaptor(AuralDelegate.self) private var delegate
 
     init() {
-        // 发布脚本用这个入口验证下载包内的资源 bundle 能真正被 Bundle.module 识别。
+        // 发布脚本用这个入口验证下载包内的资源 bundle 能真正被当前 App 加载。
         if CommandLine.arguments.contains("--diagnose-resources") {
             let image = AuralBrandAsset.template
+            let bundlePath = AuralBrandAsset.bundle.bundleURL.standardizedFileURL.path
+            guard let resourceRoot = Bundle.main.resourceURL?.standardizedFileURL.path,
+                  bundlePath == resourceRoot + "/Aural_Aural.bundle" else {
+                FileHandle.standardError.write(Data("资源包没有从当前 App 加载：\(bundlePath)\n".utf8))
+                exit(1)
+            }
             let report: [String: Any] = [
-                "bundlePath": Bundle.module.bundleURL.path,
+                "bundlePath": bundlePath,
                 "templateWidth": Int(image.size.width),
                 "templateHeight": Int(image.size.height)
             ]
