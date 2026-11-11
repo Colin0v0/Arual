@@ -14,7 +14,10 @@ test -n "$SDK_VERSION"
 SDK_PATH="$(xcrun --sdk "macosx$SDK_VERSION" --show-sdk-path)"
 export SDKROOT="$SDK_PATH"
 # AppKit 窗口、菜单和快照测试共享全局状态，CI 串行执行以消除测试之间的窗口竞争。
-swift test --no-parallel -Xswiftc -load-plugin-library -Xswiftc "$TESTING_PLUGIN" \
+swift build --build-tests -Xswiftc -load-plugin-library -Xswiftc "$TESTING_PLUGIN" \
+    -Xswiftc -sdk -Xswiftc "$SDK_PATH"
+./Scripts/prepare-test-resources.sh
+swift test --skip-build --no-parallel -Xswiftc -load-plugin-library -Xswiftc "$TESTING_PLUGIN" \
     -Xswiftc -sdk -Xswiftc "$SDK_PATH"
 AURAL_BUILD_CONFIGURATION=release ./Scripts/build-app.sh
 codesign --verify --strict dist/Aural.app
