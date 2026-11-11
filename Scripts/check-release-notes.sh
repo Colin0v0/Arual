@@ -5,7 +5,7 @@ NOTES="$(mktemp)"
 trap 'rm -f "$NOTES"' EXIT
 # 明确使用 UTF-8 复现 Bash 将紧邻中文标点读入变量名的环境，不仅检查 shell 语法。
 export LC_ALL=en_US.UTF-8
-for version in 0.1.14 0.12.345; do
+for version in 0.1.15 0.12.345; do
     VERSION="$version" TAG="v$version" REPOSITORY="test/aural" \
         DMG="dist/Aural-${version}-macOS-arm64.dmg" \
         ZIP="dist/Aural-${version}-macOS-arm64.zip" \
