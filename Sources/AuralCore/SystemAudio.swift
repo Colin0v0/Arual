@@ -198,6 +198,24 @@ public enum SystemAudio {
     }
 
     public static func snapshot() throws -> SystemAudioSnapshot {
+        try readSettledSnapshot { try readSnapshot() }
+    }
+
+    /// 设备重连时旧 ID 可能仍留在 HAL 列表中；重新枚举整份快照，不能反复读取旧 ID。
+    /// 仅对明确的失效对象短暂重试，持续失败仍向调用者报告，不返回不完整快照。
+    static func readSettledSnapshot<T>(_ read: () throws -> T) throws -> T {
+        for attempt in 0..<3 {
+            do {
+                return try read()
+            } catch let pending as AudioSnapshotPending {
+                guard attempt < 2 else { throw pending }
+                Thread.sleep(forTimeInterval: 0.03)
+            }
+        }
+        preconditionFailure("快照重试次数必须大于零")
+    }
+
+    private static func readSnapshot() throws -> SystemAudioSnapshot {
         let ids = try HAL.ids(HAL.system, HAL.address(kAudioHardwarePropertyDevices))
         let outputs = try readOutputs(
             deviceIDs: ids,
