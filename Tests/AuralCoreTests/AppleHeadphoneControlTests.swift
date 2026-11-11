@@ -30,9 +30,10 @@ struct AppleHeadphoneControlTests {
         fixture.worn = false
         let controller = HeadphoneController(appleHardware: fixture.hardware)
         controller.updateOutput(fixture.a)
-        #expect(controller.isAwaitingWear)
+        #expect(!controller.showsNoiseControls)
         #expect(controller.errorMessage == nil)
-        #expect(!controller.identityVerified)
+        #expect(controller.identityVerified)
+        #expect(controller.phase == .ready)
         controller.setNoiseMode(.cancellation)
         #expect(fixture.writes.isEmpty)
         fixture.worn = true
@@ -51,7 +52,7 @@ struct AppleHeadphoneControlTests {
         controller.setNoiseMode(.cancellation)
         fixture.worn = false
         try await settle { !controller.busy }
-        #expect(controller.isAwaitingWear)
+        #expect(!controller.showsNoiseControls)
         #expect(controller.errorMessage == nil)
         #expect(fixture.writes.isEmpty)
         fixture.worn = true
@@ -59,6 +60,22 @@ struct AppleHeadphoneControlTests {
         #expect(controller.phase == .ready)
         #expect(controller.state.noiseMode == .transparency)
         #expect(fixture.writes.isEmpty)
+        controller.shutdown()
+    }
+
+    @Test func onlyBothEarsExposeModesButAllWearStatesKeepConnectionAndBattery() {
+        let fixture = AppleControlFixture()
+        let controller = HeadphoneController(appleHardware: fixture.hardware)
+        for wear in [AppleHeadphoneWearState.singleEar, .notWorn, .unknown, .bothEars] {
+            fixture.wearState = wear
+            controller.updateOutput(fixture.a)
+            #expect(controller.phase == .ready)
+            #expect(controller.boundOutputUID == fixture.a.uid)
+            #expect(controller.state.appleBattery == AppleHeadphoneBattery(left: 97, right: 90, caseLevel: 89))
+            #expect(controller.showsNoiseControls == (wear == .bothEars))
+            if wear != .bothEars { controller.setNoiseMode(.cancellation) }
+            #expect(fixture.writes.isEmpty)
+        }
         controller.shutdown()
     }
 
@@ -230,7 +247,17 @@ private final class AppleControlFixture {
     var holdReadback = false
     var confirmWrite = true
     var writeError: Error?
-    var worn: Bool?
+    var wearState: AppleHeadphoneWearState = .bothEars
+    var worn: Bool? {
+        get { wearState.isWorn }
+        set {
+            switch newValue {
+            case true?: wearState = .bothEars
+            case false?: wearState = .notWorn
+            case nil: wearState = .unknown
+            }
+        }
+    }
     var waits: [CheckedContinuation<Void, Error>] = []
     init() { allowed = a }
     func resume() { if !waits.isEmpty { waits.removeFirst().resume() } }
@@ -242,9 +269,9 @@ private final class AppleControlFixture {
         }, snapshot: { id in
             self.reads.append(id)
             return AppleHeadphoneSnapshot(noiseMode: self.modes[id] ?? .transparency,
-                                          supportedNoiseModes: [.cancellation, .transparency, .adaptive], isWorn: self.worn)
+                                          supportedNoiseModes: [.cancellation, .transparency, .adaptive], wearState: self.wearState)
         }, requestMode: { mode, output in
-            if self.worn == false { throw AppleHeadphoneNotWorn() }
+            if self.wearState != .bothEars { throw AppleHeadphoneNotWorn() }
             self.writes.append(output)
             if let writeError = self.writeError { throw writeError }
             if self.confirmWrite { self.modes[output.id] = mode }
@@ -252,6 +279,6 @@ private final class AppleControlFixture {
             if self.holdReadback {
                 try await withCheckedThrowingContinuation { self.waits.append($0) }
             } else { await Task.yield() }
-        })
+        }, battery: { _ in AppleHeadphoneBattery(left: 97, right: 90, caseLevel: 89) })
     }
 }

@@ -45,7 +45,7 @@ struct HeadphoneSection: View {
 
     private var hasDetails: Bool {
         // 不支持耳机控制时只保留标题和禁用按钮，不再撑出空的详情区域。
-        controller.phase == .ready || controller.errorMessage != nil
+        (controller.phase == .ready && controller.showsNoiseControls) || controller.errorMessage != nil
     }
 
     private var connectionStatusTitle: String {
@@ -74,7 +74,7 @@ struct HeadphoneSection: View {
                             // 真实错误只显示一次；不把连接失败伪装成未连接的正常状态。
                             PanelError(text: L10n.text(error, language: language))
                         }
-                        if controller.phase == .ready {
+                        if controller.phase == .ready && controller.showsNoiseControls {
                             connectedControls
                         }
                     }
@@ -102,7 +102,13 @@ struct HeadphoneSection: View {
                     .foregroundStyle(PanelStyle.secondary)
                     .accessibilityLabel(L10n.text("正在充电", language: language))
             }
-            if let battery = controller.state.battery {
+            if let battery = controller.state.appleBattery {
+                // 各部件只显示系统实际返回的值，未知部件不补零、不借用另一副耳机的电量。
+                Text(appleBatteryTitle(battery))
+                    .font(PanelStyle.captionFont)
+                    .foregroundStyle(PanelStyle.secondary)
+                    .accessibilityLabel(appleBatteryTitle(battery))
+            } else if let battery = controller.state.battery {
                 // 不用假的满电图标表达电量，百分比完全来自耳机的确认响应。
                 Text("\(battery)%").monospacedDigit().foregroundStyle(PanelStyle.secondary)
                     .accessibilityLabel(L10n.format("耳机电量 %d%%", language: language,
@@ -118,6 +124,14 @@ struct HeadphoneSection: View {
         }
     }
 
+
+    private func appleBatteryTitle(_ battery: AppleHeadphoneBattery) -> String {
+        var parts: [String] = []
+        if let left = battery.left { parts.append(L10n.format("左 %d%%", language: language, arguments: [left])) }
+        if let right = battery.right { parts.append(L10n.format("右 %d%%", language: language, arguments: [right])) }
+        if let caseLevel = battery.caseLevel { parts.append(L10n.format("盒 %d%%", language: language, arguments: [caseLevel])) }
+        return parts.joined(separator: " · ")
+    }
 
     private var connectedControls: some View {
         VStack(alignment: .leading, spacing: 10) {

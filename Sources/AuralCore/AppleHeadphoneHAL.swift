@@ -1,15 +1,29 @@
 import CoreAudio
 import Foundation
 
+/// 保留佩戴状态的确定程度，不能把未知的一侧当成已佩戴或单耳。
+public enum AppleHeadphoneWearState: Equatable, Sendable {
+    case bothEars, singleEar, notWorn, unknown
+    public var isWorn: Bool? {
+        switch self {
+        case .bothEars, .singleEar: return true
+        case .notWorn: return false
+        case .unknown: return nil
+        }
+    }
+}
+
 public struct AppleHeadphoneSnapshot: Equatable, Sendable {
     public let noiseMode: NoiseMode
     public let supportedNoiseModes: [NoiseMode]
-    public let isWorn: Bool?
+    public let wearState: AppleHeadphoneWearState
+    public var isWorn: Bool? { wearState.isWorn }
 
-    public init(noiseMode: NoiseMode, supportedNoiseModes: [NoiseMode], isWorn: Bool? = nil) {
+    public init(noiseMode: NoiseMode, supportedNoiseModes: [NoiseMode],
+                wearState: AppleHeadphoneWearState = .unknown) {
         self.noiseMode = noiseMode
         self.supportedNoiseModes = supportedNoiseModes
-        self.isWorn = isWorn
+        self.wearState = wearState
     }
 }
 
@@ -51,26 +65,35 @@ public enum AppleHeadphoneHAL {
         return AppleHeadphoneSnapshot(
             noiseMode: current,
             supportedNoiseModes: supportedModes(mask: supportMask, currentRaw: currentRaw),
-            isWorn: try isWorn(deviceID: deviceID)
+            wearState: try wearState(deviceID: deviceID)
         )
     }
 
-    /// BTAudio HAL 的 iede/iesb 为运行时属性：未公开或关闭入耳检测时返回未知，不猜测佩戴状态。
-    /// 只判断是否至少一只在耳，左右主副顺序不影响结果；属性依据 pods-control 的只读实现。
-    public static func isWorn(deviceID: AudioDeviceID) throws -> Bool? {
+    /// 两侧都确认为入耳才开放模式控制；未知值不推测为单耳或未佩戴。
+    public static func wearState(deviceID: AudioDeviceID) throws -> AppleHeadphoneWearState {
         let enabledAddress = HAL.address(0x6965_6465)
         let placementAddress = HAL.address(0x6965_7362)
         guard isSupported(deviceID: deviceID), HAL.hasProperty(deviceID, enabledAddress),
-              HAL.hasProperty(deviceID, placementAddress) else { return nil }
+              HAL.hasProperty(deviceID, placementAddress) else { return .unknown }
         let enabled: UInt32 = try HAL.read(deviceID, enabledAddress, initial: 0)
-        guard enabled == 1 else { return nil }
+        guard enabled == 1 else { return .unknown }
         let placement = try HAL.read(deviceID, placementAddress, initial: (UInt32(0), UInt32(0)))
-        return wornState(primary: placement.0, secondary: placement.1)
+        return wearState(primary: placement.0, secondary: placement.1)
     }
 
+    static func wearState(primary: UInt32, secondary: UInt32) -> AppleHeadphoneWearState {
+        guard (1...3).contains(primary), (1...3).contains(secondary) else { return .unknown }
+        if primary == 1 && secondary == 1 { return .bothEars }
+        if primary == 1 || secondary == 1 { return .singleEar }
+        return .notWorn
+    }
+
+    /// 路由恢复仍只查询是否佩戴，不与模式控制所需的“双耳确认”混用。
+    public static func isWorn(deviceID: AudioDeviceID) throws -> Bool? {
+        try wearState(deviceID: deviceID).isWorn
+    }
     static func wornState(primary: UInt32, secondary: UInt32) -> Bool? {
-        guard (1...3).contains(primary), (1...3).contains(secondary) else { return nil }
-        return primary == 1 || secondary == 1
+        wearState(primary: primary, secondary: secondary).isWorn
     }
 
     /// 能力位图不声明“关闭”模式；只有设备当前确实处于关闭时才把关闭加入可选项。
@@ -95,7 +118,7 @@ public enum AppleHeadphoneHAL {
     /// 只提交一次写入。异步读回和取消由控制器完成，不在后台留一条不可取消的 sleep/write 链路。
     public static func requestNoiseMode(_ mode: NoiseMode, output: AudioOutput) throws {
         let before = try snapshot(on: output.id)
-        guard before.isWorn != false else { throw AppleHeadphoneNotWorn() }
+        guard before.wearState == .bothEars else { throw AppleHeadphoneNotWorn() }
         guard before.supportedNoiseModes.contains(mode) else {
             throw AudioFailure("Apple 耳机未公开“\(mode.title)”聆听模式")
         }

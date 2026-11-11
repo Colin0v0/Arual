@@ -14,7 +14,7 @@ struct HeadphoneRoutingIntegrationTests {
                     throw AudioFailure("耳机已断开")
                 }
             },
-            snapshot: { _ in AppleHeadphoneSnapshot(noiseMode: .transparency, supportedNoiseModes: [.cancellation, .transparency]) },
+            snapshot: { _ in AppleHeadphoneSnapshot(noiseMode: .transparency, supportedNoiseModes: [.cancellation, .transparency], wearState: .bothEars) },
             requestMode: { _, _ in Issue.record("仅枚举控制对象不应发送降噪命令") },
             waitForReadback: { await Task.yield() }))
     }
@@ -73,7 +73,7 @@ struct HeadphoneRoutingIntegrationTests {
                 validateTarget: { output in
                     guard hardware.outputs.contains(output) else { throw AudioFailure("耳机已断开") }
                 },
-                snapshot: { _ in AppleHeadphoneSnapshot(noiseMode: mode, supportedNoiseModes: [.cancellation, .transparency]) },
+                snapshot: { _ in AppleHeadphoneSnapshot(noiseMode: mode, supportedNoiseModes: [.cancellation, .transparency], wearState: .bothEars) },
                 requestMode: { target, output in mode = target; writes.append(output.uid) },
                 waitForReadback: { await Task.yield() }))
         })

@@ -5,6 +5,7 @@ import Foundation
 public struct HeadphoneReadings: Equatable {
     public var battery: Int?
     public var isCharging: Bool?
+    public var appleBattery: AppleHeadphoneBattery?
     public var noiseMode: NoiseMode?
     public init(battery: Int? = nil, noiseMode: NoiseMode? = nil, isCharging: Bool? = nil) {
         self.battery = battery
@@ -32,6 +33,9 @@ public final class HeadphoneController: ObservableObject {
     @Published public private(set) var isAwaitingWear = false
     @Published public private(set) var isRouteAuthorized = true
     public private(set) var boundOutputUID: String?
+
+    @Published public private(set) var appleWearState: AppleHeadphoneWearState = .unknown
+    public var showsNoiseControls: Bool { family != .apple || appleWearState == .bothEars }
 
     private let appleHardware: AppleHeadphoneHardware
     private let bowersWilkins = BowersWilkinsController()
@@ -143,6 +147,7 @@ public final class HeadphoneController: ObservableObject {
     }
 
     public func outputUnavailable() {
+        appleWearState = .unknown
         updateOutput(nil)
         bowersWilkins.outputUnavailable()
         classicPolicy.observe(.unavailable)
@@ -238,7 +243,7 @@ public final class HeadphoneController: ObservableObject {
     }
 
     public func setNoiseMode(_ mode: NoiseMode) {
-        guard phase == .ready, !busy, hasAuthorizedBinding,
+        guard phase == .ready, !busy, hasAuthorizedBinding, showsNoiseControls,
               supportedNoiseModes.contains(mode), state.noiseMode != mode else { return }
         if family == .bowersWilkins { bowersWilkins.setNoiseMode(mode); return }
         pendingNoiseMode = mode
@@ -323,18 +328,31 @@ public final class HeadphoneController: ObservableObject {
             try appleHardware.validateTarget(output)
             let snapshot = try appleHardware.snapshot(output.id)
             guard self.output?.uid == output.uid, family == .apple, !stopping else { return }
-            if snapshot.isWorn == false { pauseAppleUntilWorn(); return }
-            isAwaitingWear = false
-            state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
-            supportedNoiseModes = snapshot.supportedNoiseModes
-            boundOutputUID = output.uid
-            identityVerified = true
-            errorMessage = nil
-            phase = .ready
+            acceptAppleSnapshot(snapshot, output: output)
             trace("APPLE HAL MODE \(snapshot.noiseMode.rawValue)")
         } catch {
             failApple(error.localizedDescription)
         }
+    }
+
+    /// 单耳、未佩戴和未知仍是已连接设备；只隐藏模式控制，不清空真实电量或断开绑定。
+    private func acceptAppleSnapshot(_ snapshot: AppleHeadphoneSnapshot, output: AudioOutput) {
+        appleWearState = snapshot.wearState
+        isAwaitingWear = false
+        var readings = HeadphoneReadings(noiseMode: snapshot.noiseMode)
+        do {
+            let battery = try appleHardware.battery(output)
+            readings.appleBattery = battery
+            readings.battery = battery?.earbudLevel
+        } catch {
+            trace("APPLE BATTERY ERROR \(error.localizedDescription)")
+        }
+        state = readings
+        supportedNoiseModes = snapshot.supportedNoiseModes
+        boundOutputUID = output.uid
+        identityVerified = true
+        errorMessage = nil
+        phase = .ready
     }
 
     private func writeAppleNoiseMode(_ mode: NoiseMode) {
@@ -353,11 +371,14 @@ public final class HeadphoneController: ObservableObject {
                     try await self.appleHardware.waitForReadback()
                     try self.checkAppleAuthorization(output: output, generation: generation)
                     let snapshot = try self.appleHardware.snapshot(output.id)
-                    if snapshot.isWorn == false { self.pauseAppleUntilWorn(); return }
+                    if snapshot.wearState != .bothEars {
+                        self.cancelAppleOperation()
+                        self.acceptAppleSnapshot(snapshot, output: output)
+                        return
+                    }
                     guard snapshot.noiseMode == mode else { continue }
                     self.cancelDeadline()
-                    self.state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
-                    self.supportedNoiseModes = snapshot.supportedNoiseModes
+                    self.acceptAppleSnapshot(snapshot, output: output)
                     self.pendingNoiseMode = nil
                     self.noiseReadback.clear()
                     self.busy = false
@@ -374,7 +395,8 @@ public final class HeadphoneController: ObservableObject {
                       self.output?.uid == output.uid, self.output?.id == output.id,
                       self.family == .apple else { return }
                 if error is AppleHeadphoneNotWorn {
-                    self.pauseAppleUntilWorn()
+                    self.cancelAppleOperation()
+                    self.refreshApple()
                     return
                 }
                 if let failure = error as? AudioFailure, failure.status == kAudioHardwareIllegalOperationError {
@@ -382,10 +404,13 @@ public final class HeadphoneController: ObservableObject {
                     do {
                         try self.checkAppleAuthorization(output: output, generation: generation)
                         let snapshot = try self.appleHardware.snapshot(output.id)
-                        if snapshot.isWorn == false { self.pauseAppleUntilWorn(); return }
+                        if snapshot.wearState != .bothEars {
+                            self.cancelAppleOperation()
+                            self.acceptAppleSnapshot(snapshot, output: output)
+                            return
+                        }
                         self.cancelAppleOperation()
-                        self.state = HeadphoneReadings(battery: nil, noiseMode: snapshot.noiseMode)
-                        self.supportedNoiseModes = snapshot.supportedNoiseModes
+                        self.acceptAppleSnapshot(snapshot, output: output)
                         self.isAwaitingWear = false
                         self.phase = .ready
                         self.errorMessage = "Apple 耳机拒绝了本次模式切换，当前模式已重新读取；请确认佩戴状态后再操作"
@@ -409,6 +434,7 @@ public final class HeadphoneController: ObservableObject {
     }
 
     private func failApple(_ message: String) {
+        appleWearState = .unknown
         appleNeedsRetry = true
         cancelAppleOperation()
         state = HeadphoneReadings()
@@ -417,19 +443,6 @@ public final class HeadphoneController: ObservableObject {
         identityVerified = false
         errorMessage = message
         phase = .failed(message)
-    }
-
-    /// 等佩戴证据恢复后仅刷新 GET；绝不自动重放用户之前被拒绝的模式写入。
-    private func pauseAppleUntilWorn() {
-        cancelAppleOperation()
-        appleNeedsRetry = false
-        isAwaitingWear = true
-        state = HeadphoneReadings()
-        supportedNoiseModes = []
-        boundOutputUID = nil
-        identityVerified = false
-        errorMessage = nil
-        phase = .idle
     }
 
     private func cancelAppleOperation() {
