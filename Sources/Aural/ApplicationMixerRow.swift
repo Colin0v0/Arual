@@ -15,6 +15,29 @@ struct ApplicationMixerRow: View {
     let applyConfiguration: () -> Void
     let stopManaging: () -> Void
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover: PanelRowHoverState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 真实应用行默认静止；视觉快照可显式打开首帧悬停，不依赖合成鼠标事件。
+    init(app: ApplicationAudioRow, state: ApplicationMixState,
+         levelSource: ApplicationLevelSource, metersVisible: Bool,
+         awaitingStream: Bool, status: String, toggleMute: @escaping () -> Void,
+         setGain: @escaping (Float) -> Void, retryMeter: @escaping () -> Void,
+         applyConfiguration: @escaping () -> Void, stopManaging: @escaping () -> Void,
+         initiallyHovered: Bool = false) {
+        self.app = app
+        self.state = state
+        self.levelSource = levelSource
+        self.metersVisible = metersVisible
+        self.awaitingStream = awaitingStream
+        self.status = status
+        self.toggleMute = toggleMute
+        self.setGain = setGain
+        self.retryMeter = retryMeter
+        self.applyConfiguration = applyConfiguration
+        self.stopManaging = stopManaging
+        _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
+    }
 
     var body: some View {
         // 全部控件保持一排，真实错误放入同行标记、悬停和菜单，不再额外撑出第二行。
@@ -61,9 +84,13 @@ struct ApplicationMixerRow: View {
                               label: L10n.format("%@ 的独立增益", language: language, arguments: [app.label]))
                 .frame(minWidth: PanelMetrics.compactSliderMinimumWidth)
                 .help(L10n.text("应用播放增益，不影响麦克风输入", language: language))
-            PanelPercentage(value: state.gain)
+            PanelPercentage(value: state.gain, highlighted: hover.active)
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
+        .padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 9)
+        .panelContentHover(hover.active)
+        .onHover { hover.active = $0 }
+        // 应用行仅改变读数颜色，不再绘制包住整行的灰框。
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hover.active)
         .help(state.failure.map { L10n.text($0, language: language) }
               ?? L10n.format("%@；右键打开应用操作", language: language, arguments: [status]))
         .contextMenu { options }

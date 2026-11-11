@@ -34,33 +34,15 @@ enum StatusItemInteraction {
 @MainActor
 enum StatusItemMenu {
     static func make(openPanel: @escaping () -> Void, openSettings: @escaping () -> Void,
-                     showBattery: Bool, toggleBattery: @escaping () -> Void,
                      quit: @escaping () -> Void,
-                     version: String = AuralVersion.current,
-                     restartVersion: String? = nil,
-                     restartUpdate: @escaping () -> Void = {},
                      language: AppLanguage = .chinese) -> NSMenu {
         let menu = NSMenu()
         // 不覆盖 appearance：菜单材质、深浅与文字交给状态栏原生菜单路径决定。
         menu.autoenablesItems = false
-        // 电量显示是可切换的菜单栏选项，具体数值仍只在图标右侧展示。
+        // 右键只保留常用操作；电量偏好、版本信息与更新操作统一留在设置页。
         menu.addItem(PanelActionMenuItem(title: L10n.text("打开 Aural", language: language), handler: openPanel))
-        let batteryItem = PanelActionMenuItem(title: L10n.text("显示当前设备剩余电量", language: language),
-                                              handler: toggleBattery)
-        batteryItem.state = showBattery ? .on : .off
-        menu.addItem(batteryItem)
-        // 版本号是不可点击信息项，右键即可确认当前运行的构建。
-        let versionItem = NSMenuItem(title: L10n.format("版本 %@", language: language, arguments: [version]),
-                                     action: nil, keyEquivalent: "")
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
-        if let restartVersion {
-            menu.addItem(PanelActionMenuItem(
-                title: L10n.format("重启以更新到 %@", language: language, arguments: [restartVersion]),
-                handler: restartUpdate
-            ))
-        }
         menu.addItem(PanelActionMenuItem(title: L10n.text("设置…", language: language), handler: openSettings))
+        menu.addItem(.separator())
         // 保留应用原有退出委托，资源清理失败仍由主模型明确上报。
         menu.addItem(PanelActionMenuItem(title: L10n.text("退出 Aural", language: language), handler: quit))
         return menu

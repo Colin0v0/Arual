@@ -6,62 +6,45 @@ struct HeadphoneControlSelectionTests {
     private let mac = AudioOutput(id: 1, uid: "speaker", name: "Mac", transport: kAudioDeviceTransportTypeBuiltIn)
     private let apple = AudioOutput(id: 2, uid: "apple", name: "Podssss", transport: kAudioDeviceTransportTypeBluetooth)
     private let bw = AudioOutput(id: 3, uid: "bw", name: "Colin Px7 S3", transport: kAudioDeviceTransportTypeBluetooth)
-    private let aggregate = AudioOutput(id: 100, uid: "local.aural.multi.test", name: "组合", transport: kAudioDeviceTransportTypeAggregate)
 
-    private func group(_ members: [AudioOutput]) -> ConfirmedOutputRoute {
-        let route = MultiOutputRoute(deviceID: aggregate.id, uid: aggregate.uid, outputs: members,
-            mainOutputUID: members[0].uid, previousOutputUID: mac.uid, sampleRate: 48_000)
-        return ConfirmedOutputRoute(intent: .simultaneous(members.map(\.uid)), output: aggregate, aggregate: route)
-    }
-    private func snapshot(_ members: [AudioOutput], selected: AudioDeviceID = 100) -> SystemAudioSnapshot {
-        SystemAudioSnapshot(outputs: members + [aggregate], selectedID: selected, controls: [:])
-    }
-    private func supports(_ output: AudioOutput) -> Bool { [apple.uid, bw.uid].contains(output.uid) }
-
-    @Test func appleAndBowersUseIdenticalSingleAndUniqueMemberSelectionRules() {
-        for headphone in [apple, bw] {
-            var selection = HeadphoneControlSelection()
-            let single = ConfirmedOutputRoute(intent: .single(headphone.uid), output: headphone, aggregate: nil)
-            selection.update(confirmed: single, snapshot: snapshot([mac, headphone], selected: headphone.id), supports: supports)
-            #expect(selection.candidates == [headphone])
-            selection.update(confirmed: group([mac, headphone]), snapshot: snapshot([mac, headphone]), supports: supports)
-            #expect(selection.candidates == [headphone])
-            #expect(selection.candidates.allSatisfy { !$0.isAggregate })
-        }
-    }
-
-    @Test func multipleHeadphonesAreAllAuthorizedWithoutAnExplicitChoice() {
+    @Test func allSupportedHeadphonesAppearEvenWhenSpeakersAreSelected() {
         var selection = HeadphoneControlSelection()
-        let members = [mac, bw, apple]
-        let audio = snapshot(members)
-        selection.update(confirmed: group(members), snapshot: audio, supports: supports)
-        #expect(selection.candidates.map(\.uid) == [bw.uid, apple.uid])
-        #expect(audio.selectedID == aggregate.id) // 解析所有控制对象不改变声音路由。
-        selection.update(confirmed: group(members), snapshot: audio, supports: supports)
-        #expect(selection.candidates == [bw, apple])
-        selection.update(confirmed: nil, snapshot: audio, supports: supports)
-        #expect(selection.candidates.isEmpty) // 过渡期没有写入资格。
-        selection.update(confirmed: group(members), snapshot: audio, supports: supports)
-        #expect(selection.candidates == [bw, apple])
-    }
-
-    @Test func removedMemberLosesControlAndConfirmedReturnRestoresItsOwnCard() {
-        var selection = HeadphoneControlSelection()
-        selection.update(confirmed: group([mac, apple, bw]), snapshot: snapshot([mac, apple, bw]), supports: supports)
-        selection.update(confirmed: group([mac, bw]), snapshot: snapshot([mac, bw]), supports: supports)
-        #expect(selection.candidates == [bw])
-        selection.update(confirmed: group([mac, apple, bw]), snapshot: snapshot([mac, apple, bw]), supports: supports)
+        let speaker = AudioOutput(id: 4, uid: "bt-speaker", name: "Bluetooth Speaker", transport: kAudioDeviceTransportTypeBluetooth)
+        let monitor = AudioOutput(id: 5, uid: "monitor", name: "Display", transport: kAudioDeviceTransportTypeDisplayPort)
+        let audio = SystemAudioSnapshot(outputs: [mac, apple, speaker, monitor, bw], selectedID: mac.id, controls: [:])
+        selection.update(snapshot: audio, supports: { [apple.uid, bw.uid].contains($0.uid) })
         #expect(selection.candidates == [apple, bw])
+        #expect(audio.selectedID == mac.id)
+        // 仅有音量或蓝牙传输均不足以入选；物理传输与协议能力必须同时满足。
+        selection.update(snapshot: audio, supports: { _ in false })
+        #expect(selection.candidates.isEmpty)
     }
 
-    @Test func staleMemberIdentityAndStaleDefaultCannotAuthorizeControls() {
+    @Test func defaultOutputChangesDoNotChangeCandidatesButDeviceRemovalDoes() {
         var selection = HeadphoneControlSelection()
+        for selected in [mac.id, apple.id, UInt32(100), UInt32(0)] {
+            selection.update(snapshot: SystemAudioSnapshot(outputs: [mac, apple, bw], selectedID: selected, controls: [:]),
+                             supports: { _ in true })
+            #expect(selection.candidates == [apple, bw])
+        }
+        selection.update(snapshot: SystemAudioSnapshot(outputs: [mac, bw], selectedID: mac.id, controls: [:]), supports: { _ in true })
+        #expect(selection.candidates == [bw])
         let reconnected = AudioOutput(id: 22, uid: apple.uid, name: apple.name, transport: apple.transport)
-        selection.update(confirmed: group([mac, apple]), snapshot: snapshot([mac, reconnected]), supports: supports)
-        #expect(selection.candidates.isEmpty)
-        selection.update(confirmed: group([mac, reconnected]), snapshot: snapshot([mac, reconnected]), supports: supports)
-        #expect(selection.candidates.first?.id == 22)
-        selection.update(confirmed: group([mac, reconnected]), snapshot: snapshot([mac, reconnected], selected: mac.id), supports: supports)
-        #expect(selection.candidates.isEmpty)
+        selection.update(snapshot: SystemAudioSnapshot(outputs: [mac, reconnected, bw], selectedID: mac.id, controls: [:]), supports: { _ in true })
+        #expect(selection.candidates == [reconnected, bw])
+    }
+
+    @Test func connectionGuardChecksIdentityAndLivenessInsteadOfPlaybackRoute() throws {
+        try HeadphoneConnectionGuard.check("apple", deviceIDs: [1, 2],
+                                          readUID: { $0 == 1 ? "speaker" : "apple" },
+                                          isConnectedBluetoothOutput: { $0 == 2 })
+        #expect(throws: AudioFailure.self) {
+            try HeadphoneConnectionGuard.check("apple", deviceIDs: [1], readUID: { _ in "speaker" },
+                                              isConnectedBluetoothOutput: { _ in true })
+        }
+        #expect(throws: AudioFailure.self) {
+            try HeadphoneConnectionGuard.check("apple", deviceIDs: [2], readUID: { _ in "apple" },
+                                              isConnectedBluetoothOutput: { _ in false })
+        }
     }
 }

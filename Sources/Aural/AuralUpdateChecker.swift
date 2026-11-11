@@ -7,8 +7,14 @@ struct AuralAvailableUpdate: Equatable, Sendable {
     let version: String
     let pageURL: URL
     let downloadURL: URL
-    let assetSize: Int
     let sha256: String
+    /// 旧版本发布的是 zip；新版本发布 DMG。安装器按实际扩展名选择解析方式。
+    let archiveKind: AuralUpdateArchiveKind
+}
+
+enum AuralUpdateArchiveKind: String, Equatable, Sendable {
+    case dmg
+    case zip
 }
 
 /// 下载、校验和安装阶段全部由同一个状态机表达，界面只根据它绘图。
@@ -30,6 +36,8 @@ final class AuralUpdateChecker: ObservableObject {
     @Published private(set) var phase: AuralUpdatePhase = .idle
     @Published private(set) var isChecking = false
     @Published private(set) var lastError: String?
+    /// 只在用户主动检查并确认没有更新后显示，关闭设置窗口时清除。
+    @Published private(set) var didCheckWithoutUpdate = false
 
     private let defaults: UserDefaults
     private let currentVersion: String
@@ -83,6 +91,7 @@ final class AuralUpdateChecker: ObservableObject {
         }
         isChecking = true
         lastError = nil
+        if force { didCheckWithoutUpdate = false }
         checkTask = Task { [weak self] in
             guard let self else { return }
             defer { isChecking = false }
@@ -92,12 +101,14 @@ final class AuralUpdateChecker: ObservableObject {
                 guard let update else {
                     availableUpdate = nil
                     phase = .idle
+                    didCheckWithoutUpdate = force
                     return
                 }
                 let skippedVersion = defaults.string(forKey: skippedVersionKey)
                 guard Self.shouldPresent(update: update, skippedVersion: skippedVersion) else {
                     availableUpdate = nil
                     phase = .idle
+                    didCheckWithoutUpdate = force
                     return
                 }
                 // 跳过只对当时那个版本生效；发现更高版本后清除旧记录。
@@ -106,6 +117,7 @@ final class AuralUpdateChecker: ObservableObject {
                 }
                 availableUpdate = update
                 phase = .available
+                didCheckWithoutUpdate = false
             } catch {
                 // 已有更新提示不能因一次网络失败消失，只记录本次检查错误。
                 lastError = error.localizedDescription
@@ -120,7 +132,7 @@ final class AuralUpdateChecker: ObservableObject {
         }
     }
 
-    /// 用户点击更新后下载 zip，完成摘要校验、解压、签名验证后才允许重启安装。
+    /// 用户点击更新后下载 DMG，完成摘要校验和签名验证后才允许重启安装。
     func downloadAndPrepare() {
         guard let update = availableUpdate else { return }
         switch phase {
@@ -150,6 +162,11 @@ final class AuralUpdateChecker: ObservableObject {
         lastError = nil
     }
 
+    /// 设置窗口关闭后，下一次打开重新从默认入口开始。
+    func resetSettingsPresentation() {
+        didCheckWithoutUpdate = false
+    }
+
     /// 真正重启前再确认 helper、payload 和版本，避免退出了才发现安装文件缺失。
     func restartAndInstall() {
         guard phase == .ready, let update = availableUpdate else { return }
@@ -177,37 +194,37 @@ final class AuralUpdateChecker: ObservableObject {
         pendingRestart = false
     }
 
-    /// 解析层独立于网络，测试可直接覆盖预发布、草稿、乱序响应和资源选择。
-    nonisolated static func newestUpdate(from data: Data, currentVersion: String) throws -> AuralAvailableUpdate? {
-        let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+    /// Releases Atom 源不占用 GitHub REST API 的匿名配额，也不依赖客户端内置密钥。
+    nonisolated static func newestUpdate(from data: Data, currentVersion: String,
+                                         repository: String) throws -> AuralAvailableUpdate? {
+        let parser = GitHubReleaseFeedParser()
+        let xmlParser = XMLParser(data: data)
+        xmlParser.delegate = parser
+        guard xmlParser.parse() else {
+            throw AuralUpdateError.invalidReleaseFeed
+        }
         guard let current = AuralVersionNumber(currentVersion) else {
             throw AuralUpdateError.invalidCurrentVersion
         }
-        let newest = releases
-            .filter { !$0.draft }
-            .compactMap { release -> (AuralVersionNumber, GitHubRelease)? in
+        let newest = parser.releases
+            .compactMap { release -> (AuralVersionNumber, GitHubReleaseEntry)? in
                 guard let version = AuralVersionNumber(release.tagName) else { return nil }
                 return (version, release)
             }
             .max { $0.0 < $1.0 }
         guard let newest, newest.0 > current else { return nil }
         let version = newest.0.description
-        let expectedAssetName = "Aural-\(version)-macOS-arm64.zip"
-        guard let asset = newest.1.assets.first(where: { $0.name == expectedAssetName }) else {
-            throw AuralUpdateError.missingUpdateAsset(expectedAssetName)
-        }
-        guard let digest = asset.digest else {
-            throw AuralUpdateError.missingDigest(expectedAssetName)
-        }
-        let sha256 = try parseSHA256Digest(digest)
-        guard asset.size > 0 else {
-            throw AuralUpdateError.invalidAssetSize(expectedAssetName)
+        // 新版本只发布 DMG；安装器仍保留 zip 解析分支，避免旧发布资产无法被已安装版本读取。
+        let assetName = "Aural-\(version)-macOS-arm64.dmg"
+        guard let downloadURL = URL(string:
+                "https://github.com/\(repository)/releases/download/v\(version)/\(assetName)") else {
+            throw AuralUpdateError.invalidRepository
         }
         return AuralAvailableUpdate(version: version,
-                                    pageURL: newest.1.htmlURL,
-                                    downloadURL: asset.browserDownloadURL,
-                                    assetSize: asset.size,
-                                    sha256: sha256)
+                                    pageURL: newest.1.pageURL,
+                                    downloadURL: downloadURL,
+                                    sha256: "",
+                                    archiveKind: .dmg)
     }
 
     /// 同一个版本只要被用户关闭过就不再主动展示，更高版本会自动解除跳过状态。
@@ -228,23 +245,52 @@ final class AuralUpdateChecker: ObservableObject {
         return value
     }
 
+    /// Release 的 `.dmg.sha256` 与 `shasum -a 256` 使用相同格式。
+    nonisolated static func parseChecksumFile(_ text: String) throws -> String {
+        let fields = text.split(whereSeparator: \.isWhitespace)
+        guard let value = fields.first.map(String.init),
+              value.count == 64, value.allSatisfy({ $0.isHexDigit }) else {
+            throw AuralUpdateError.invalidDigest(text)
+        }
+        return value.lowercased()
+    }
+
     private func fetchAvailableUpdate() async throws -> AuralAvailableUpdate? {
         guard let repository = Bundle.main.object(forInfoDictionaryKey: "AuralUpdateRepository") as? String,
               !repository.isEmpty else {
             throw AuralUpdateError.missingRepository
         }
-        guard let url = URL(string: "https://api.github.com/repos/\(repository)/releases?per_page=30") else {
+        guard let url = URL(string: "https://github.com/\(repository)/releases.atom") else {
             throw AuralUpdateError.invalidRepository
         }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("application/atom+xml", forHTTPHeaderField: "Accept")
         request.setValue("Aural/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw AuralUpdateError.httpFailure((response as? HTTPURLResponse)?.statusCode)
         }
-        return try Self.newestUpdate(from: data, currentVersion: currentVersion)
+        guard var update = try Self.newestUpdate(from: data, currentVersion: currentVersion,
+                                                  repository: repository) else { return nil }
+        let checksumURL = update.downloadURL.appendingPathExtension("sha256")
+        var checksumRequest = URLRequest(url: checksumURL,
+                                         cachePolicy: .reloadIgnoringLocalCacheData,
+                                         timeoutInterval: 15)
+        checksumRequest.setValue("Aural/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        let (checksumData, checksumResponse) = try await URLSession.shared.data(for: checksumRequest)
+        guard let checksumHTTP = checksumResponse as? HTTPURLResponse else {
+            throw AuralUpdateError.httpFailure(nil)
+        }
+        guard checksumHTTP.statusCode == 200 else {
+            throw AuralUpdateError.httpFailure(checksumHTTP.statusCode)
+        }
+        update = AuralAvailableUpdate(version: update.version,
+                                      pageURL: update.pageURL,
+                                      downloadURL: update.downloadURL,
+                                      sha256: try Self.parseChecksumFile(
+                                        String(decoding: checksumData, as: UTF8.self)),
+                                      archiveKind: update.archiveKind)
+        return update
     }
 
     private func startDownload(update: AuralAvailableUpdate, paths: AuralUpdateInstaller.Paths) {
@@ -316,31 +362,47 @@ final class AuralUpdateChecker: ObservableObject {
     }
 }
 
-private struct GitHubRelease: Decodable {
+/// Atom 条目只承载公开版本标签与页面地址；安装包名由固定发布约定构造。
+private struct GitHubReleaseEntry {
     let tagName: String
-    let htmlURL: URL
-    let draft: Bool
-    let assets: [GitHubReleaseAsset]
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case htmlURL = "html_url"
-        case draft
-        case assets
-    }
+    let pageURL: URL
 }
 
-private struct GitHubReleaseAsset: Decodable {
-    let name: String
-    let browserDownloadURL: URL
-    let size: Int
-    let digest: String?
+/// GitHub Releases Atom 中的 entry/title/link 足够发现版本，不需要 REST JSON。
+private final class GitHubReleaseFeedParser: NSObject, XMLParserDelegate {
+    private(set) var releases: [GitHubReleaseEntry] = []
+    private var currentID = ""
+    private var readingID = false
+    private var currentPageURL: URL?
 
-    enum CodingKeys: String, CodingKey {
-        case name
-        case browserDownloadURL = "browser_download_url"
-        case size
-        case digest
+    func parser(_ parser: XMLParser, didStartElement elementName: String,
+                namespaceURI: String?, qualifiedName qName: String?,
+                attributes attributeDict: [String: String] = [:]) {
+        if elementName == "entry" {
+            currentID = ""
+            currentPageURL = nil
+        } else if elementName == "id" {
+            readingID = true
+        } else if elementName == "link", attributeDict["rel"] == "alternate",
+                  let value = attributeDict["href"] {
+            currentPageURL = URL(string: value)
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if readingID { currentID += string }
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String,
+                namespaceURI: String?, qualifiedName qName: String?) {
+        if elementName == "entry", let pageURL = currentPageURL {
+            // GitHub 页面地址不总是带标签前缀，entry id 才严格包含 /v<版本>。
+            let tagName = currentID.split(separator: "/").last.map(String.init) ?? ""
+            if tagName.hasPrefix("v") {
+                releases.append(GitHubReleaseEntry(tagName: tagName, pageURL: pageURL))
+            }
+        }
+        if elementName == "id" { readingID = false }
     }
 }
 
@@ -432,6 +494,7 @@ enum AuralUpdateError: LocalizedError {
     case invalidRepository
     case invalidCurrentVersion
     case httpFailure(Int?)
+    case invalidReleaseFeed
     case missingUpdateAsset(String)
     case missingDigest(String)
     case invalidDigest(String)
@@ -455,6 +518,8 @@ enum AuralUpdateError: LocalizedError {
         case .invalidCurrentVersion: return "当前版本号无效"
         case .httpFailure(let status):
             return status.map { "服务器返回 HTTP \($0)" } ?? "服务器未返回有效响应"
+        case .invalidReleaseFeed:
+            return "更新源返回了无法解析的发布信息"
         case .missingUpdateAsset(let name):
             return "最新版本缺少更新包 \(name)"
         case .missingDigest(let name):

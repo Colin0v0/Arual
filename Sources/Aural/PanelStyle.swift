@@ -24,11 +24,27 @@ enum PanelStyle {
     static let controlHover = adaptive(light: controlHoverLight, dark: controlHoverDark)
     // 选中的页签是白色卡片；与设备图标的浅灰底、列表的平铺背景分开定义。
     static let tabSelection = adaptive(light: .white, dark: NSColor(red: 0.23, green: 0.23, blue: 0.24, alpha: 1))
+    /// 分段控件使用中性浅灰轨道，选中项仍是白色胶囊，不借用系统蓝色的强调色。
+    static let segmentTrack = adaptive(light: NSColor(red: 0.94, green: 0.94, blue: 0.95, alpha: 1),
+                                       dark: NSColor(red: 0.20, green: 0.20, blue: 0.21, alpha: 1))
     static let iconSurface = adaptive(light: NSColor(white: 1, alpha: 0.72),
                                       dark: NSColor(red: 0.27, green: 0.27, blue: 0.29, alpha: 1))
+    /// 局部图标底面叠一层中性色：浅色轻压暗、深色轻提亮，不绘制整行底板。
+    static let iconHoverTint = adaptive(light: NSColor(white: 0, alpha: 0.045),
+                                        dark: NSColor(white: 1, alpha: 0.065))
     static let prominentFill = adaptive(light: NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
                                         dark: NSColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1))
     static let prominentInk = adaptive(light: .white, dark: NSColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1))
+    /// 更新入口使用独立的紫色语义，避免和输出设备选中的系统蓝色混在一起。
+    static let updateFill = adaptive(light: NSColor(red: 0.957, green: 0.949, blue: 1, alpha: 1),
+                                     dark: NSColor(red: 0.19, green: 0.17, blue: 0.29, alpha: 1))
+    static let updateBorder = adaptive(light: NSColor(red: 0.84, green: 0.81, blue: 0.97, alpha: 1),
+                                       dark: NSColor(red: 0.39, green: 0.35, blue: 0.60, alpha: 1))
+    static let updateInk = adaptive(light: NSColor(red: 0.33, green: 0.27, blue: 0.83, alpha: 1),
+                                    dark: NSColor(red: 0.73, green: 0.68, blue: 1, alpha: 1))
+    static let updateSolid = adaptive(light: NSColor(red: 0.34, green: 0.27, blue: 0.87, alpha: 1),
+                                      dark: NSColor(red: 0.44, green: 0.36, blue: 1, alpha: 1))
+    static let updateSolidInk = Color.white
     static let error = adaptive(light: NSColor(red: 0.69, green: 0.20, blue: 0.20, alpha: 1),
                                 dark: NSColor(red: 1.0, green: 0.42, blue: 0.42, alpha: 1))
     static let radius: CGFloat = 11
@@ -119,6 +135,104 @@ struct PanelButtonStyle: ButtonStyle {
     }
 }
 
+/// 设置页和布尔选项共用的分段控件；未选中文字保持浅灰，悬停才提升到正文色。
+struct PanelSegmentedControl<Selection: Hashable>: View {
+    let items: [Selection]
+    @Binding var selection: Selection
+    let title: (Selection) -> String
+    @Namespace private var selectionNamespace
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.self) { item in
+                Button {
+                    selection = item
+                } label: {
+                    Text(title(item))
+                        .font(PanelStyle.bodyFont)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 27)
+                        .contentShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(PanelSegmentButtonStyle(selected: selection == item,
+                                                     namespace: selectionNamespace))
+                .accessibilityAddTraits(selection == item ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(PanelStyle.segmentTrack, in: RoundedRectangle(cornerRadius: 9))
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.leftArrow) { moveSelection(by: -1) }
+        .onKeyPress(.rightArrow) { moveSelection(by: 1) }
+    }
+
+    /// 分段控件只保留一个键盘焦点，方向键在选项之间移动，避免焦点停在已隐藏的胶囊里。
+    private func moveSelection(by offset: Int) -> KeyPress.Result {
+        guard let index = items.firstIndex(of: selection) else { return .ignored }
+        let target = min(items.count - 1, max(0, index + offset))
+        guard target != index else { return .handled }
+        selection = items[target]
+        return .handled
+    }
+}
+
+/// 选中块使用独立白色胶囊；未选中项不再沿用系统分段控件的深色文字。
+private struct PanelSegmentButtonStyle: ButtonStyle {
+    let selected: Bool
+    let namespace: Namespace.ID
+
+    func makeBody(configuration: Configuration) -> some View {
+        SegmentBody(configuration: configuration, selected: selected, namespace: namespace)
+    }
+
+    private struct SegmentBody: View {
+        let configuration: ButtonStyle.Configuration
+        let selected: Bool
+        let namespace: Namespace.ID
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @StateObject private var hover = HoverState()
+
+        private final class HoverState: ObservableObject {
+            @Published var active = false
+        }
+
+        var body: some View {
+            configuration.label
+                // 悬停只改变文字对比度，不额外铺蓝色；选中项始终保持正文黑。
+                .foregroundStyle(selected || (isEnabled && (hover.active || configuration.isPressed))
+                                 ? PanelStyle.ink : PanelStyle.secondary)
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(PanelStyle.tabSelection)
+                            .shadow(color: PanelStyle.ink.opacity(0.08), radius: 1, y: 1)
+                            .matchedGeometryEffect(id: "segment-selection", in: namespace)
+                    }
+                }
+                .opacity(isEnabled ? 1 : 0.4)
+                .onHover { hover.active = $0 }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hover.active)
+        }
+    }
+}
+
+/// 所有是/否设置统一使用关闭与开启两格，不使用系统蓝色开关。
+struct PanelBooleanControl: View {
+    @Binding var isOn: Bool
+    @Environment(\.appLanguage) private var language
+
+    var body: some View {
+        PanelSegmentedControl(items: [false, true], selection: $isOn,
+                              title: { value in
+            L10n.text(value ? "开启" : "关闭", language: language)
+        })
+    }
+}
+
 /// 页签和白色选中卡片彼此独立：滑块始终只有一个实例，只沿固定轨道水平移动。
 /// 不再在不同 Button 的背景里销毁、重建 matchedGeometry 节点，避免快速反向点击时跳位。
 struct PanelTabs<Selection: Hashable>: View {
@@ -199,12 +313,13 @@ struct PanelTabButtonStyle: ButtonStyle {
 /// 系统音量与应用增益使用同一种读数布局，100% 也不允许换行。
 struct PanelPercentage: View {
     let value: Float
+    var highlighted = false
 
     var body: some View {
         Text(value, format: .percent.precision(.fractionLength(0)))
             .font(PanelStyle.bodyFont)
             .monospacedDigit()
-            .foregroundStyle(PanelStyle.secondary)
+            .foregroundStyle(highlighted ? PanelStyle.ink : PanelStyle.secondary)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .frame(width: PanelStyle.percentageWidth, alignment: .trailing)
@@ -227,3 +342,30 @@ struct PanelError: View {
     }
 }
 
+/// 列表内容共用悬停状态，仅用于图标、读数等局部颜色反馈。
+@MainActor
+final class PanelRowHoverState: ObservableObject {
+    @Published var active: Bool
+
+    /// 默认从静止态开始；截图测试可显式传入悬停态，产品交互仍只由真实鼠标进入/离开驱动。
+    init(active: Bool = false) {
+        self.active = active
+    }
+}
+
+/// 悬停只为行内图标和读数提供短颜色过渡，不再绘制整行底板、描边或阴影。
+/// 不缩放、不位移，尊重“减少动态效果”，鼠标扫过时布局保持稳定。
+private struct PanelContentHoverModifier: ViewModifier {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: active)
+    }
+}
+
+extension View {
+    func panelContentHover(_ active: Bool) -> some View {
+        modifier(PanelContentHoverModifier(active: active))
+    }
+}

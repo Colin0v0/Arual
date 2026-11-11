@@ -26,7 +26,7 @@ struct OutputRoutingErrorRow: View {
             }
         }
         .frame(minHeight: PanelActionMetrics.size)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, PanelMetrics.horizontalInset)
     }
 }
 
@@ -95,24 +95,28 @@ struct OutputRoutingSection: View {
                 Text(selectedUnmanagedOutput
                      ? L10n.text("选择一台扬声器继续播放", language: language)
                      : L10n.text("上次的同时输出还在，清理后可重新设置", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if routing.phase.isBusy {
                 Text(L10n.text("正在等待系统确认输出…", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if routing.phase == .awaitingMembers {
                 Text(L10n.text("已选设备均暂不可用，等待原设备恢复", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             } else if !routing.phase.isBusy, routing.confirmed != nil, !routing.unavailableMemberUIDs.isEmpty {
                 Text(L10n.text("部分设备暂不可用，正通过其余已选设备播放；恢复后自动加入", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if let warning = routing.warning {
                 Text(L10n.text(warning, language: language))
                     .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if let error {
                 OutputRoutingErrorRow(text: L10n.text(error, language: language),
@@ -120,17 +124,20 @@ struct OutputRoutingSection: View {
                                       dismiss: dismissError)
                 if let actual = routing.actualOutput {
                     Text(L10n.format("实际输出：%@", language: language, arguments: [actual.name]))
-                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                        .padding(.horizontal, PanelMetrics.horizontalInset)
                 }
                 if let systemID = routing.actualSystemOutputID,
                    systemID != routing.actualOutput?.id,
                    let systemOutput = audio.outputs.first(where: { $0.id == systemID }) {
                     Text(L10n.format("提示音输出：%@", language: language, arguments: [systemOutput.name]))
-                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                        .padding(.horizontal, PanelMetrics.horizontalInset)
                 }
                 if !routing.completedSteps.isEmpty {
                     Text(routing.completedSteps.map { L10n.text($0, language: language) }.joined(separator: " · "))
-                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                        .padding(.horizontal, PanelMetrics.horizontalInset)
                 }
             }
             if selection.isChoosing {
@@ -196,7 +203,7 @@ struct OutputRoutingSection: View {
                         PanelActionButton(L10n.text("清理残留设备", language: language), action: stop)
                         Spacer()
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
                     .frame(height: PanelMetrics.deviceRowHeight)
                 }
             } else if showSimultaneousOutput {
@@ -256,7 +263,7 @@ struct SimultaneousOutputEditor: View {
         .overlay {
             RoundedRectangle(cornerRadius: 9).strokeBorder(PanelStyle.line.opacity(0.8), lineWidth: 1)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, PanelMetrics.horizontalInset)
         .padding(.top, 6)
         .padding(.bottom, 2)
     }
@@ -283,6 +290,7 @@ private struct SimultaneousOutputDeviceRow: View {
     let setVolume: (Float) -> Void
     let setMuted: (Bool) -> Void
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover = PanelRowHoverState()
 
     private func muteDescription(_ mute: AudioDeviceMute) -> String {
         guard let muted = mute.muted else { return L10n.text("设备未公开静音状态", language: language) }
@@ -297,11 +305,18 @@ private struct SimultaneousOutputDeviceRow: View {
         HStack(spacing: 10) {
             Button(action: toggle) {
                 HStack(spacing: 8) {
+                    // 勾选图标表达真实路由状态，继续使用功能色；悬停本身不改变它。
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 13))
-                        .foregroundStyle(selected ? PanelStyle.accent : PanelStyle.secondary)
+                        .foregroundStyle(selected ? PanelStyle.accent
+                                         : (hover.active ? PanelStyle.ink : PanelStyle.secondary))
+                        // 空心圈悬停仅加淡底和提高轮廓对比，不提前显示勾选。
+                        .background {
+                            Circle().fill(hover.active && !selected ? PanelStyle.iconHoverTint : .clear)
+                        }
                     Image(systemName: output.symbol)
                         .font(.system(size: 12, weight: .medium))
+                        // 多设备行仅选择圆圈跟随整行悬停，设备字形和底面保持静止。
                         .foregroundStyle(selected ? PanelStyle.accent : PanelStyle.secondary)
                         .frame(width: 22, height: 22)
                         .background(PanelStyle.iconSurface, in: RoundedRectangle(cornerRadius: 5))
@@ -367,6 +382,8 @@ private struct SimultaneousOutputDeviceRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: PanelMetrics.deviceRowHeight)
+        .panelContentHover(hover.active)
+        .onHover { hover.active = $0 }
     }
 }
 
@@ -388,6 +405,7 @@ struct SimultaneousOutputRow: View {
     let setVolume: (Float) -> Void
     let setMuted: (Bool) -> Void
     @Environment(\.appLanguage) private var language
+    @StateObject private var hover = PanelRowHoverState()
 
     var body: some View {
         Group {
@@ -415,7 +433,7 @@ struct SimultaneousOutputRow: View {
                                           label: L10n.text("同时输出总音量", language: language))
                             .frame(minWidth: PanelMetrics.compactSliderMinimumWidth)
                             .disabled(!control.volumeWritable)
-                        PanelPercentage(value: scalar)
+                        PanelPercentage(value: scalar, highlighted: hover.active)
                     } else {
                         Text(L10n.text("不支持统一音量", language: language))
                             .font(PanelStyle.captionFont)
@@ -423,7 +441,7 @@ struct SimultaneousOutputRow: View {
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, PanelMetrics.horizontalInset)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 // 未启用时整行就是设置入口，不再额外放一个“设置”文字。
@@ -432,7 +450,7 @@ struct SimultaneousOutputRow: View {
                         identity
                         Spacer()
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
@@ -444,15 +462,17 @@ struct SimultaneousOutputRow: View {
         }
         .frame(height: PanelMetrics.deviceRowHeight)
         .font(PanelStyle.bodyFont)
+        .panelContentHover(hover.active)
+        .onHover { hover.active = $0 }
     }
 
     private var identity: some View {
         HStack(spacing: 8) {
-            AudioDeviceIcon(symbol: "rectangle.on.rectangle", selected: selected)
+            AudioDeviceIcon(symbol: "rectangle.on.rectangle", selected: selected, highlighted: hover.active)
             Text(title).lineLimit(1).foregroundStyle(PanelStyle.ink)
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(PanelStyle.secondary)
+                .foregroundStyle(hover.active ? PanelStyle.ink : PanelStyle.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

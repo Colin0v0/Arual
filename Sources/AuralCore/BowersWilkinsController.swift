@@ -149,7 +149,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     public func retryAutomaticConnection(output: AudioOutput) {
         guard peripheral == nil else { errorMessage = "请先等待当前控制通道断开"; return }
         guard output.isBluetooth, HeadphoneFamily.recognize(output.name) == .bowersWilkins else {
-            errorMessage = "请先在系统输出中选择 B&W 耳机"; return
+            errorMessage = "请先连接支持控制的 B&W 耳机"; return
         }
         observedOutput = output
         autoConnection.updateOutput(output.uid)
@@ -161,7 +161,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
     public func scan(output: AudioOutput) {
         guard peripheral == nil else { errorMessage = "请先等待当前控制通道断开"; return }
         guard output.isBluetooth, HeadphoneFamily.recognize(output.name) == .bowersWilkins else {
-            errorMessage = "请先在系统输出中选择 B&W 耳机"; return
+            errorMessage = "请先连接支持控制的 B&W 耳机"; return
         }
         observedOutput = output
         autoConnection.updateOutput(output.uid)
@@ -173,7 +173,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
         guard routeAuthorized, !suspended, !shuttingDown, peripheral == nil else { return }
         cancelReconnect()
         do {
-            try HeadphoneRouteGuard.check(output.uid)
+            try HeadphoneConnectionGuard.check(output.uid)
             // 每次都按同一个经典蓝牙地址验证；BLE UUID 会变化，不读取旧 UUID 锁死新连接。
         } catch { fail(error.localizedDescription); return }
         clearReadings()
@@ -247,7 +247,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
               let candidate = discovered[id], peripheral == nil else { return }
         do {
             guard let boundOutputUID else { throw AudioFailure("耳机输出绑定已丢失") }
-            try HeadphoneRouteGuard.check(boundOutputUID)
+            try HeadphoneConnectionGuard.check(boundOutputUID)
         } catch { fail(error.localizedDescription); return }
         central.stopScan(); cancelDeadline(); cancelSelection()
         peripheral = candidate
@@ -405,7 +405,7 @@ public final class BowersWilkinsController: NSObject, ObservableObject {
         let next = queue.removeFirst()
         do {
             guard let boundOutputUID else { throw AudioFailure("耳机输出绑定已丢失") }
-            try HeadphoneRouteGuard.check(boundOutputUID)
+            try HeadphoneConnectionGuard.check(boundOutputUID)
             let packet = try BWRPC.request(next.command, payload: next.payload)
             guard packet.count <= peripheral.maximumWriteValueLength(for: .withResponse) else {
                 throw AudioFailure("耳机单次写入长度不足")

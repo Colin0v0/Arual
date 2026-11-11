@@ -26,7 +26,7 @@ struct AudioPanel: View {
         // 原生容器是显示高度的唯一来源，动画中的中间高度只用于排版，不回写目标尺寸。
         GeometryReader { container in
             VStack(spacing: 0) {
-                header.padding(.horizontal, 12).frame(height: 44)
+                header.padding(.horizontal, PanelMetrics.horizontalInset).frame(height: 44)
                 PanelTabs(items: pages, selection: currentPage,
                           title: { $0.title(language: settings.resolvedLanguage) }) { page in
                     // 单层导航直接选择内容页，并按该页的自然高度调整原生外框。
@@ -35,7 +35,7 @@ struct AudioPanel: View {
                     model.setApplicationMetersSelected(applicationMetersSelected, for: surface)
                 }
                 .accessibilityLabel(settings.localized("控制区域"))
-                .padding(.horizontal, 12).padding(.bottom, 9)
+                .padding(.horizontal, PanelMetrics.horizontalInset).padding(.bottom, 9)
 
                 // 三个内容页各自保留测量与滚动位置，耳机页不再被设备列表或麦克风页撑高。
                 PanelPageViewport(items: pages, selection: currentPage,
@@ -54,7 +54,8 @@ struct AudioPanel: View {
                             HeadphoneControlsSection(group: model.headphones)
                         }
                     }
-                    .padding(.horizontal, 12).padding(.top, 1).padding(.bottom, 12)
+                    // 内容页不再叠加外层水平 padding；设备行和应用行的行内留白负责左右对称。
+                    .padding(.top, 1).padding(.bottom, 12)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 footer.frame(height: 34)
@@ -114,7 +115,7 @@ struct AudioPanel: View {
             case .input:
                 microphoneControls
             }
-            PanelDivider().padding(.horizontal, 12)
+            PanelDivider().padding(.horizontal, PanelMetrics.horizontalInset)
             // 两个设备页都使用相同模型与回调，APP 音量依然是播放增益，不冒充麦克风混音。
             ApplicationVolumeSection(model: model, metersVisible: metersVisible)
         }
@@ -122,8 +123,8 @@ struct AudioPanel: View {
 
     private var microphoneControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let error = model.inputError { PanelError(text: settings.localized(error)).padding(.horizontal, 12) }
-            if let error = model.inputOperationError { PanelError(text: settings.localized(error)).padding(.horizontal, 12) }
+            if let error = model.inputError { PanelError(text: settings.localized(error)).padding(.horizontal, PanelMetrics.horizontalInset) }
+            if let error = model.inputOperationError { PanelError(text: settings.localized(error)).padding(.horizontal, PanelMetrics.horizontalInset) }
             if let input = model.inputAudio {
                 InputDevicesSection(audio: input, select: model.selectInput,
                                     setVolume: { model.setInputVolume($0, on: $1) },
@@ -136,6 +137,13 @@ struct AudioPanel: View {
         layout.size
     }
 
+    // 按可见内容而非透明点击框对齐右边距，中英文使用同一规则。
+    private func trailingAction(_ button: PanelActionButton) -> PanelActionButton {
+        var button = button
+        button.alignsContentToTrailing = true
+        return button
+    }
+
     private var header: some View {
         HStack(spacing: 7) {
             // 主面板与菜单栏、App 图标使用同一个品牌标记。
@@ -144,8 +152,8 @@ struct AudioPanel: View {
             Spacer()
             updateBadge
             // 齿轮就是设置入口，左键直接打开设置窗口；诊断与系统权限留在右键菜单。
-            PanelActionButton(systemName: "gearshape", title: settings.localized("设置"),
-                              action: openSettings, menu: makeOptionsMenu)
+            trailingAction(PanelActionButton(systemName: "gearshape", title: settings.localized("设置"),
+                              hoverStyle: .foregroundOnly, action: openSettings, menu: makeOptionsMenu))
                 .frame(width: PanelActionMetrics.size, height: PanelActionMetrics.size)
         }
     }
@@ -158,12 +166,12 @@ struct AudioPanel: View {
         VStack(spacing: 0) {
             PanelDivider()
             HStack {
-                // 权限与版本仍放在工具菜单，不把技术说明常驻成界面装饰。
-                Text(settings.localized("音频控制")).foregroundStyle(PanelStyle.secondary)
+                // 底栏显示真实版本号，跟随发布版本自动更新，不提供点击或悬停装饰。
+                Text("v\(AuralVersion.current)").foregroundStyle(PanelStyle.secondary)
                 Spacer()
-                PanelActionButton(settings.localized("退出")) { NSApp.terminate(nil) }
+                trailingAction(PanelActionButton(settings.localized("退出"), hoverStyle: .foregroundOnly) { NSApp.terminate(nil) })
                     .help(settings.localized("退出 Aural"))
-            }.padding(.leading, 15).padding(.trailing, 12).padding(.vertical, 3)
+            }.padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 3)
         }
     }
 

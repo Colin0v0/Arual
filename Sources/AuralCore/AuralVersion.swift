@@ -1,6 +1,6 @@
 /// 版本定义独立于界面，便于诊断入口与菜单栏共用。
 public enum AuralVersion {
-    public static let current = "0.1.12"
+    public static let current = "0.1.13"
 }
 
 /// 发布标签与 App 版号共用同一套比较规则，正确处理 0.1.10 大于 0.1.9。

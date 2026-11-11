@@ -15,6 +15,7 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var updates = AuralUpdateChecker.shared
     @StateObject private var loginItem = LoginItemState()
+    @StateObject private var updateCheckHover = PanelRowHoverState()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -25,7 +26,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
             footer
         }
-        .padding(18)
+        .padding(SettingsMetrics.horizontalInset)
         .frame(width: SettingsMetrics.width, height: SettingsMetrics.height, alignment: .topLeading)
         .background(PanelStyle.canvas)
         .foregroundStyle(PanelStyle.ink)
@@ -62,24 +63,14 @@ struct SettingsView: View {
     private var generalCard: some View {
         SettingsCard(title: settings.localized("通用")) {
             SettingsRow(title: settings.localized("界面语言")) {
-                Picker("", selection: $settings.language) {
-                    ForEach(AppLanguage.allCases) { language in
-                        Text(languageTitle(language)).tag(language)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+                PanelSegmentedControl(items: AppLanguage.allCases, selection: $settings.language,
+                                      title: languageTitle)
                 .frame(width: SettingsMetrics.controlWidth)
             }
             PanelDivider()
             SettingsRow(title: settings.localized("外观")) {
-                Picker("", selection: $settings.appearance) {
-                    ForEach(AppAppearance.allCases) { appearance in
-                        Text(appearanceTitle(appearance)).tag(appearance)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+                PanelSegmentedControl(items: AppAppearance.allCases, selection: $settings.appearance,
+                                      title: appearanceTitle)
                 .frame(width: SettingsMetrics.controlWidth)
             }
             PanelDivider()
@@ -137,21 +128,31 @@ struct SettingsView: View {
                 .font(PanelStyle.captionFont)
                 .foregroundStyle(PanelStyle.secondary)
             Spacer()
-            if let error = updates.lastError {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(PanelStyle.captionFont)
-                    .foregroundStyle(PanelStyle.error)
-                    .help(error)
-            }
             if updates.availableUpdate != nil {
                 AuralUpdateCapsule(updates: updates, settings: settings)
+            } else if updates.didCheckWithoutUpdate {
+                Text(settings.localized("未发现新版本"))
+                    .font(PanelStyle.captionFont)
+                    .foregroundStyle(PanelStyle.secondary)
+            } else if let error = updates.lastError {
+                Button(settings.localized("检查失败，重试")) {
+                    updates.check(force: true)
+                }
+                .buttonStyle(.plain)
+                .font(PanelStyle.captionFont)
+                .foregroundStyle(PanelStyle.error)
+                .disabled(updates.isChecking)
+                .help(error)
             } else {
                 Button(settings.localized(updates.isChecking ? "正在检查更新…" : "检查更新")) {
                     updates.check(force: true)
                 }
                 .buttonStyle(.plain)
                 .font(PanelStyle.captionFont)
-                .foregroundStyle(PanelStyle.secondary)
+                // 只变文字颜色，不增加悬停底板；检查中不呈现可点击的高亮。
+                .foregroundStyle(updateCheckHover.active && !updates.isChecking
+                                 ? PanelStyle.ink : PanelStyle.secondary)
+                .onHover { updateCheckHover.active = $0 }
                 .disabled(updates.isChecking)
             }
         }
@@ -193,14 +194,17 @@ struct SettingsView: View {
 }
 
 enum SettingsMetrics {
+    // 分组标题、设置项与分隔线共用窗口留白，内层不再叠加缩进。
+    static let horizontalInset: CGFloat = 18
     static let width: CGFloat = 500
     static let height: CGFloat = 470
     static let controlWidth: CGFloat = 238
+    static let booleanControlWidth: CGFloat = 116
     static let rowHeight: CGFloat = 40
     static var size: CGSize { CGSize(width: width, height: height) }
 }
 
-private struct SettingsCard<Content: View>: View {
+struct SettingsCard<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
 
@@ -213,19 +217,19 @@ private struct SettingsCard<Content: View>: View {
             VStack(spacing: 0) {
                 content()
             }
-            .padding(.horizontal, 12)
-            .background(PanelStyle.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(PanelStyle.line.opacity(0.75), lineWidth: 1)
-            }
+            // 内容与分组标题直接对齐，不再叠加原卡片的水平留白。
         }
     }
 }
 
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     let title: String
     @ViewBuilder let control: () -> Control
+
+    init(title: String, @ViewBuilder control: @escaping () -> Control) {
+        self.title = title
+        self.control = control
+    }
 
     var body: some View {
         HStack(spacing: 16) {
@@ -234,14 +238,21 @@ private struct SettingsRow<Control: View>: View {
             Spacer(minLength: 12)
             control()
         }
+        // 标题和说明与分组标题使用同一左边缘。
         .frame(height: SettingsMetrics.rowHeight)
     }
 }
 
-private struct SettingsToggleRow: View {
+struct SettingsToggleRow: View {
     let title: String
     let detail: String
     @Binding var isOn: Bool
+
+    init(title: String, detail: String, isOn: Binding<Bool>) {
+        self.title = title
+        self.detail = detail
+        _isOn = isOn
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -253,11 +264,11 @@ private struct SettingsToggleRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            Toggle("", isOn: $isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
+            PanelBooleanControl(isOn: $isOn)
+                .frame(width: SettingsMetrics.booleanControlWidth)
+                .accessibilityLabel(title)
         }
+        // 标题和说明与分组标题使用同一左边缘。
         .padding(.vertical, 8)
         .frame(minHeight: 52)
     }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Testing
 import AuralCore
@@ -18,13 +19,33 @@ struct ApplicationMixerRowTests {
         #expect(image.size.height <= 46)
     }
 
+    @Test @MainActor func hoverStateRendersAroundTheWholeApplicationRow() throws {
+        var state = ApplicationMixState()
+        state.enable(outputUID: "test-output")
+        let levelSource = ApplicationLevelSource()
+        levelSource.update(0.6)
+        let app = try #require(applicationFixture())
+        let row = ApplicationMixerRow(app: app, state: state,
+                                      levelSource: levelSource, metersVisible: true,
+                                      awaitingStream: false, status: "正在应用音量",
+                                      toggleMute: {}, setGain: { _ in },
+                                      retryMeter: {}, applyConfiguration: {},
+                                      stopManaging: {}, initiallyHovered: true)
+            .frame(width: PanelMetrics.width - 24)
+            .background(PanelStyle.canvas)
+            .preferredColorScheme(.light)
+        let host = NSHostingView(rootView: row)
+        host.frame.size = host.fittingSize
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/aural-application-row-hover-light.png"))
+    }
+
     @MainActor private func renderRow(state: ApplicationMixState, level: Float?) throws -> NSImage {
         // 明确的测试夹具，不进入产品数据源，不请求权限或建立 tap。
-        let rows = ApplicationCatalog.rows(
-            applications: [RunningApplicationInfo(processID: 1, bundleID: "test.music", name: "网易云音乐", bundleURL: nil)],
-            records: [], executableURLs: [:]
-        )
-        let app = try #require(rows.first)
+        let app = try #require(applicationFixture())
         let levelSource = ApplicationLevelSource()
         levelSource.update(level)
         let row = ApplicationMixerRow(app: app, state: state,
@@ -66,5 +87,13 @@ struct ApplicationMixerRowTests {
             try png.write(to: URL(fileURLWithPath: "/tmp/aural-application-row-layout.png"))
         }
         return image
+    }
+
+    @MainActor private func applicationFixture() -> ApplicationAudioRow? {
+        ApplicationCatalog.rows(
+            applications: [RunningApplicationInfo(processID: 1, bundleID: "test.music",
+                                                  name: "网易云音乐", bundleURL: nil)],
+            records: [], executableURLs: [:]
+        ).first
     }
 }

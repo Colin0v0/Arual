@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// 控件共用尺寸规范；喇叭只改变前景色，工具栏与文字操作保留白色悬停底。
+/// 控件共用尺寸规范；支持仅改变前景色，避免入口按钮的悬停底板干扰视觉对齐。
 enum PanelActionHoverStyle: Equatable {
     case background
     case foregroundOnly
@@ -20,6 +20,7 @@ struct PanelActionButton: NSViewRepresentable {
     let tint: Color?
     let hoverStyle: PanelActionHoverStyle
     let isLoading: Bool
+    var alignsContentToTrailing = false
     @Environment(\.isEnabled) private var isEnabled
 
     init(systemName: String, title: String, tint: Color? = nil,
@@ -34,13 +35,14 @@ struct PanelActionButton: NSViewRepresentable {
         isLoading = false
     }
 
-    init(_ title: String, isLoading: Bool = false, action: @escaping () -> Void) {
+    init(_ title: String, isLoading: Bool = false,
+         hoverStyle: PanelActionHoverStyle = .background, action: @escaping () -> Void) {
         content = .text(title)
         self.title = title
         self.action = action
         menu = nil
         tint = nil
-        hoverStyle = .background
+        self.hoverStyle = hoverStyle
         self.isLoading = isLoading
     }
 
@@ -50,6 +52,7 @@ struct PanelActionButton: NSViewRepresentable {
 
     func updateNSView(_ button: PanelActionControl, context: Context) {
         if button.hoverStyle != hoverStyle { button.hoverStyle = hoverStyle }
+        (button.cell as? PanelActionCell)?.alignsContentToTrailing = alignsContentToTrailing
         button.setContent(content)
         let nextTint = tint.map { NSColor($0) }
         if button.idleTint != nextTint { button.idleTint = nextTint }
@@ -91,6 +94,26 @@ enum PanelActionMetrics {
     }
 }
 
+/// 右侧入口按可见内容对齐，不改变按钮外框和点击范围。
+final class PanelActionCell: NSButtonCell {
+    var alignsContentToTrailing = false
+
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        var result = super.imageRect(forBounds: rect)
+        if alignsContentToTrailing { result.origin.x = rect.maxX - result.width }
+        return result
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var result = super.titleRect(forBounds: rect)
+        if alignsContentToTrailing {
+            result.size.width = ceil(attributedTitle.size().width)
+            result.origin.x = rect.maxX - result.width
+        }
+        return result
+    }
+}
+
 final class PanelActionControl: NSButton {
     var activate: () -> Void = {}
     var makeMenu: (() -> NSMenu)?
@@ -117,6 +140,7 @@ final class PanelActionControl: NSButton {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        cell = PanelActionCell(textCell: "")
         title = ""
         isBordered = false
         imagePosition = .imageOnly

@@ -9,7 +9,7 @@ struct HeadphoneControlsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if group.entries.isEmpty {
-                Text(L10n.text("当前输出路由中没有可控制的耳机", language: language))
+                Text(L10n.text("没有已连接且支持控制的耳机", language: language))
                     .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(12)
             }
             ForEach(group.entries) { entry in
@@ -61,19 +61,26 @@ struct HeadphoneSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             VStack(alignment: .leading, spacing: 0) {
-                header.padding(12)
+                header
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    // 有控制项时缩短底部留白，避免与下一块的顶部内边距叠得过宽。
+                    .padding(.bottom, hasDetails ? 6 : 12)
                 // 只有提示或已连接控制项才占用下一块，扫描结果不再撑出额外列表。
                 if hasDetails {
-                    PanelDivider().padding(.leading, 12)
+                    // 耳机信息与控制项由留白区分，不再插入横线。
                     VStack(alignment: .leading, spacing: 10) {
                         if let error = controller.errorMessage {
                             // 真实错误只显示一次；不把连接失败伪装成未连接的正常状态。
-                            PanelError(text: error)
+                            PanelError(text: L10n.text(error, language: language))
                         }
                         if controller.phase == .ready {
                             connectedControls
                         }
-                    }.padding(10)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
+                    .padding(.bottom, 10)
                 }
             }
         }
@@ -127,16 +134,7 @@ struct HeadphoneSection: View {
                 Text(L10n.text("该耳机尚未确认噪声控制能力", language: language))
                     .foregroundStyle(PanelStyle.secondary)
             }
-            HStack {
-                // 刷新期间在原按钮里显示加载圈，保留固定宽度，不挤动旁边的操作。
-                PanelActionButton(L10n.text("刷新", language: language),
-                                  isLoading: controller.busy) { controller.refresh() }
-                    .disabled(!controller.isRouteAuthorized)
-                Spacer()
-                if controller.canDisconnect {
-                    PanelActionButton(L10n.text("停止控制", language: language)) { controller.disconnect() }
-                }
-            }
+            // 常规控制区只呈现耳机功能，不再放置手动刷新和停止控制入口。
         }
     }
 
@@ -151,7 +149,7 @@ struct HeadphoneSection: View {
             Button(connectionActionTitle) {
                 if let output { controller.retryAutomaticConnection(output: output) }
             }.buttonStyle(PanelButtonStyle(prominent: true)).disabled(!outputIsSupported)
-                .help(L10n.text("选择支持的蓝牙耳机作为系统输出后会自动连接", language: language))
+                .help(L10n.text("连接支持的蓝牙耳机后会自动启用控制", language: language))
         } else if controller.phase != .disconnecting {
             PanelActionButton(L10n.text("取消", language: language)) { controller.disconnect() }
         } else {

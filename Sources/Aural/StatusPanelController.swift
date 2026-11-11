@@ -9,7 +9,7 @@ final class StatusPanelController: NSObject {
     private let popup: StatusPopupPanel
     private let statusItem: NSStatusItem
     private let model: AppModel
-    private var settingsWindow: NSWindow?
+    private var settingsWindow: SettingsWindow?
     private let popupLayout = PanelPresentationLayout()
     private let popupSizeAnimator = PanelSizeAnimator()
     private var popupTopLeft = CGPoint.zero
@@ -88,8 +88,9 @@ final class StatusPanelController: NSObject {
         hidePopup()
         if settingsWindow == nil {
             let size = SettingsMetrics.size
-            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+            let window = SettingsWindow(contentRect: NSRect(origin: .zero, size: size),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            window.delegate = self
             window.title = settingsWindowTitle
             window.isReleasedWhenClosed = false
             let host = NSHostingController(rootView: SettingsView(model: model, settings: AppSettings.shared))
@@ -103,6 +104,8 @@ final class StatusPanelController: NSObject {
         updateSettingsWindowTitle()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // 激活后清除系统自动选中的首个控件，仍允许用户主动使用 Tab 导航。
+        settingsWindow?.makeFirstResponder(nil)
     }
 
     private func updatePopupSize(_ size: CGSize) {
@@ -215,24 +218,10 @@ final class StatusPanelController: NSObject {
     private func showStatusItemMenu() {
         guard let button = statusItem.button else { return }
         // 右键只叠加菜单，不关闭已展开的主面板；关闭菜单后保留原页签和窗口位置。
-        // 菜单保持极简：打开、菜单栏电量开关、版本、设置和退出。
-        let updates = AuralUpdateChecker.shared
-        let restartVersion: String?
-        if case .ready = updates.phase {
-            restartVersion = updates.availableUpdate?.version
-        } else {
-            restartVersion = nil
-        }
+        // 右键仅提供打开、设置与退出；不混入偏好开关和禁用的信息项。
         let menu = StatusItemMenu.make(openPanel: { [weak self] in self?.showPopup() },
                                        openSettings: { [weak self] in self?.showSettings() },
-                                       showBattery: AppSettings.shared.showCurrentDeviceBattery,
-                                       toggleBattery: {
-                                           AppSettings.shared.showCurrentDeviceBattery.toggle()
-                                       },
                                        quit: { NSApp.terminate(nil) },
-                                       version: AuralVersion.current,
-                                       restartVersion: restartVersion,
-                                       restartUpdate: { updates.restartAndInstall() },
                                        language: AppSettings.shared.resolvedLanguage)
         // 临时交给 NSStatusItem 的原生菜单路径，由 AppKit 选择屏幕、菜单栏下方的位置和高亮。
         // 普通 NSMenu.popUp 是视图弹出菜单，不具备状态栏菜单的锚定行为，可能覆盖菜单栏。
@@ -276,6 +265,9 @@ extension StatusPanelController: NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === popup { hidePopup(); return }
+        if notification.object as? NSWindow === settingsWindow {
+            AuralUpdateChecker.shared.resetSettingsPresentation()
+        }
     }
 }
 /// 顶栏 44、标签区 36、页脚 34；显示时按当前屏幕的可用高度限制外框。
@@ -288,6 +280,9 @@ enum PanelMetrics {
     static let maximumContentHeight: CGFloat = 560
     static let chromeHeight: CGFloat = 114
     static let contentWidth: CGFloat = width - 24
+    // 主面板所有左右留白只由这一个常量决定；行内 padding 是唯一水平入口，
+    // 外层容器不再叠加水平留白，避免左边出现双重缩进而右边只有一层。
+    static let horizontalInset: CGFloat = 12
     static let deviceRowHeight: CGFloat = 40
     static let deviceSelectionWidth: CGFloat = 176
     static let compactSliderMinimumWidth: CGFloat = 136

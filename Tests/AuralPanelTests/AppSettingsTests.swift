@@ -61,8 +61,12 @@ struct AppSettingsTests {
         #expect(L10n.text("显示多设备输出", language: .english) == "Show Multi-Device Output")
         #expect(L10n.format("多设备输出 · %d 台", language: .english, arguments: [2])
                 == "Multi-Device Output · 2 Devices")
-        #expect(L10n.text("显示当前设备剩余电量", language: .english) == "Show Current Device Battery")
+        #expect(L10n.text("显示当前设备剩余电量", language: .english) == "Show Device Battery")
         #expect(L10n.text("检查更新…", language: .english) == "Check for Updates…")
+        #expect(L10n.text("未发现新版本", language: .english) == "No Updates Available")
+        #expect(L10n.text("开启", language: .english) == "On")
+        #expect(L10n.text("关闭", language: .english) == "Off")
+        #expect(L10n.text("检查失败，重试", language: .english) == "Check Failed, Retry")
         #expect(L10n.format("发现新版本 %@", language: .english, arguments: ["0.1.11"])
                 == "Version 0.1.11 is available")
         #expect(L10n.text("设备未公开可写的硬件静音控制", language: .english)
@@ -74,6 +78,50 @@ struct AppSettingsTests {
         let size = SettingsMetrics.size
         #expect(size.width == 500)
         #expect(size.height == 470)
+    }
+
+    @Test func englishSettingDescriptionsFitOneLine() {
+        // 按设置窗口、分组和行的真实留白扣除控件宽度，不用缩小字号或截断掩盖换行。
+        let availableWidth = SettingsMetrics.width - SettingsMetrics.horizontalInset * 2 - 32 - 12
+            - SettingsMetrics.booleanControlWidth
+        let keys = [
+            "登录 Mac 后自动运行 Aural。",
+            "关闭后，耳机控制从主面板隐藏。",
+            "关闭后，多设备输出功能从输出面板隐藏。",
+            "在菜单栏 Aural 图标右侧显示当前设备电量。"
+        ]
+        for key in keys {
+            let text = L10n.text(key, language: .english)
+            let width = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width
+            #expect(width <= availableWidth)
+        }
+    }
+
+    @Test @MainActor func segmentedAndBooleanControlsKeepNeutralUnselectedText() throws {
+        let renderer = ImageRenderer(content:
+            VStack(spacing: 8) {
+                PanelSegmentedControl(items: AppAppearance.allCases,
+                                      selection: .constant(AppAppearance.system),
+                                      title: { appearance in
+                    switch appearance {
+                    case .system: return "跟随系统"
+                    case .light: return "浅色"
+                    case .dark: return "深色"
+                    }
+                })
+                PanelBooleanControl(isOn: .constant(false))
+            }
+            .padding(8)
+            .frame(width: SettingsMetrics.controlWidth)
+            .background(PanelStyle.canvas)
+            .preferredColorScheme(.light)
+        )
+        let image = try #require(renderer.nsImage)
+        let bitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/aural-settings-controls.png"))
+        #expect(image.size.width == SettingsMetrics.controlWidth)
+        #expect(SettingsMetrics.booleanControlWidth == 116)
     }
 
     @Test func settingsViewRendersAtFixedSizeInBothAppearances() throws {
