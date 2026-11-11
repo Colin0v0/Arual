@@ -71,6 +71,25 @@ struct AuralApp: App {
     @NSApplicationDelegateAdaptor(AuralDelegate.self) private var delegate
 
     init() {
+        // 发布脚本用这个入口验证下载包内的资源 bundle 能真正被 Bundle.module 识别。
+        if CommandLine.arguments.contains("--diagnose-resources") {
+            let image = AuralBrandAsset.template
+            let report: [String: Any] = [
+                "bundlePath": Bundle.module.bundleURL.path,
+                "templateWidth": Int(image.size.width),
+                "templateHeight": Int(image.size.height)
+            ]
+            do {
+                let data = try JSONSerialization.data(withJSONObject: report,
+                                                      options: [.prettyPrinted, .sortedKeys])
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data("\n".utf8))
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("资源诊断失败：\(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+        }
         // 诊断入口只读取真实 HAL 状态；失败返回非零，不启动窗口和蓝牙。
         if CommandLine.arguments.contains("--diagnose-applications") {
             do {
