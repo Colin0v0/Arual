@@ -102,6 +102,8 @@ enum BWRPCatalog {
     static let ancGet = BWRPCCommand(namespace: 0x03, id: 0x01)
     static let ancSet = BWRPCCommand(namespace: 0x03, id: 0x02)
     static let addressGet = BWRPCCommand(namespace: 0x08, id: 0x02)
+    static let chargingGet = BWRPCCommand(namespace: 0x08, id: 0x0B)
     static let batteryGet = BWRPCCommand(namespace: 0x08, id: 0x0C)
-    static let primaryReads = [batteryGet, ancGet]
+    static let primaryReads = [batteryGet, chargingGet, ancGet]
+    static let batteryReads = [batteryGet, chargingGet]
 }

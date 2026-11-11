@@ -31,6 +31,14 @@ final class StatusPopupPanel: NSPanel {
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { dismiss?() }
 
+    /// 鼠标操作先结束旧的键盘焦点，再正常分发事件；不禁用 Tab 和辅助功能。
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown {
+            makeFirstResponder(nil)
+        }
+        super.sendEvent(event)
+    }
+
     /// 对应 Magpie 的 tintPanel：底色由窗口自己的图层持续绘制，
     /// 透明页面只负责内容，窗口每帧改变底边时不会等 SwiftUI 补背景。
     func installNativeBackdrop() {
@@ -50,6 +58,8 @@ final class StatusPopupPanel: NSPanel {
             setFrame(frame, display: false, animate: false)
             contentView?.layoutSubtreeIfNeeded()
             makeKeyAndOrderFront(nil)
+            // 系统可能在窗口成为 key 时自动选中第一个按钮；打开面板不代表用户按了 Tab。
+            makeFirstResponder(nil)
         }
     }
 }

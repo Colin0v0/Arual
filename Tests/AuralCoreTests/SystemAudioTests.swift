@@ -29,6 +29,50 @@ struct SystemAudioTests {
         }
     }
 
+    @Test func pendingSnapshotReenumeratesAndRecovers() throws {
+        var enumerations = 0
+        let outputs = try SystemAudio.readSettledSnapshot {
+            enumerations += 1
+            let ids: [AudioDeviceID] = enumerations == 1 ? [11, 22] : [11]
+            return try SystemAudio.readOutputs(
+                deviceIDs: ids,
+                readStreams: { _ in [1] },
+                readUID: { "speaker-\($0)" },
+                readName: { id in
+                    if id == 22 { throw AudioFailure("设备正在销毁", status: HAL.badObjectStatus) }
+                    return "扬声器 \(id)"
+                },
+                readTransport: { _ in kAudioDeviceTransportTypeBuiltIn },
+                currentDeviceIDs: { ids }
+            )
+        }
+        // 第二次必须重新读取设备表，而不是继续使用已经失效的对象 ID。
+        #expect(enumerations == 2)
+        #expect(outputs.map(\.id) == [11])
+    }
+
+    @Test func persistentPendingSnapshotRemainsAnError() {
+        var attempts = 0
+        #expect(throws: AudioSnapshotPending.self) {
+            try SystemAudio.readSettledSnapshot {
+                attempts += 1
+                throw AudioSnapshotPending(AudioFailure("设备仍未收敛", status: HAL.badObjectStatus))
+            } as Void
+        }
+        #expect(attempts == 3)
+    }
+
+    @Test func ordinarySnapshotFailureIsNotRetried() {
+        var attempts = 0
+        #expect(throws: AudioFailure.self) {
+            try SystemAudio.readSettledSnapshot {
+                attempts += 1
+                throw AudioFailure("真实属性错误")
+            } as Void
+        }
+        #expect(attempts == 1)
+    }
+
     @Test func invalidVolumeIsRejectedBeforeHardwareAccess() {
         for value: Float in [-0.1, 1.1, .nan, .infinity] {
             #expect(throws: (any Error).self) { try SystemAudio.setVolume(value, on: 0) }

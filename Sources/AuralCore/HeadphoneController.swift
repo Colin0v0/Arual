@@ -4,9 +4,11 @@ import Foundation
 
 public struct HeadphoneReadings: Equatable {
     public var battery: Int?
+    public var isCharging: Bool?
     public var noiseMode: NoiseMode?
-    public init(battery: Int? = nil, noiseMode: NoiseMode? = nil) {
+    public init(battery: Int? = nil, noiseMode: NoiseMode? = nil, isCharging: Bool? = nil) {
         self.battery = battery
+        self.isCharging = isCharging
         self.noiseMode = noiseMode
     }
 }
@@ -301,7 +303,7 @@ public final class HeadphoneController: ObservableObject {
             return
         }
         phase = bowersWilkins.phase
-        state = HeadphoneReadings(battery: bowersWilkins.state.battery, noiseMode: bowersWilkins.state.noiseMode)
+        state = HeadphoneReadings(battery: bowersWilkins.state.battery, noiseMode: bowersWilkins.state.noiseMode, isCharging: bowersWilkins.state.isCharging)
         candidates = bowersWilkins.candidates
         busy = bowersWilkins.busy
         identityVerified = bowersWilkins.identityVerified
