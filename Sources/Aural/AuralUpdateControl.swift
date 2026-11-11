@@ -48,6 +48,45 @@ struct AuralUpdateBadge: View {
     }
 
     var body: some View {
+        if Self.usesTextPresentation(phase) {
+            textPrompt
+        } else {
+            capsulePrompt
+        }
+    }
+
+    /// 静止的“发现更新”只占用一行文字；下载、准备和重启仍用胶囊表达进度。
+    private var textPrompt: some View {
+        HStack(spacing: 5) {
+            Button(action: action) {
+                Text(availableTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(hover.active ? PanelStyle.ink : PanelStyle.secondary)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if canSkip {
+                Button(action: skip) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundStyle(PanelStyle.secondary)
+                        .frame(width: 12, height: 12)
+                        .background(PanelStyle.surface, in: Circle())
+                        .overlay { Circle().strokeBorder(PanelStyle.line, lineWidth: 1) }
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(L10n.format("跳过 %@", language: language, arguments: [version]))
+                .accessibilityLabel(L10n.format("跳过 %@", language: language, arguments: [version]))
+            }
+        }
+        .frame(height: 18)
+        .onHover { hover.active = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover.active)
+    }
+
+    private var capsulePrompt: some View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: iconName)
@@ -93,6 +132,12 @@ struct AuralUpdateBadge: View {
     }
 
     private var canSkip: Bool { Self.showsDismiss(phase) }
+
+    /// 只有静态可更新状态使用文字；失败重试仍有明确操作语义，保持胶囊。
+    static func usesTextPresentation(_ phase: AuralUpdatePhase) -> Bool {
+        if case .available = phase { return true }
+        return false
+    }
 
     /// 只有用户可决定“暂不更新”的静止状态才显示关闭入口。
     static func showsDismiss(_ phase: AuralUpdatePhase) -> Bool {
@@ -151,5 +196,9 @@ struct AuralUpdateBadge: View {
         case .failed:
             return L10n.text("重试更新", language: language)
         }
+    }
+
+    private var availableTitle: String {
+        L10n.format("发现新版本 %@", language: language, arguments: [version])
     }
 }
