@@ -169,6 +169,32 @@ final class AuralUpdateChecker: ObservableObject {
         didCheckWithoutUpdate = false
     }
 
+#if DEBUG
+    /// 视觉回归测试只注入“发现更新”的静止状态，不发起网络请求或下载。
+    func installPreviewUpdate(version: String) {
+        availableUpdate = AuralAvailableUpdate(
+            version: version,
+            pageURL: URL(string: "https://github.com/example/Aural/releases/tag/v\(version)")!,
+            downloadURL: URL(string: "https://github.com/example/Aural/releases/download/v\(version)/Aural-\(version)-macOS-arm64.dmg")!,
+            sha256: String(repeating: "0", count: 64),
+            archiveKind: .dmg
+        )
+        phase = .available
+        isChecking = false
+        lastError = nil
+        didCheckWithoutUpdate = false
+    }
+
+    /// 截图完成后恢复共享单例，避免测试状态泄漏到其他界面快照。
+    func clearPreviewUpdate() {
+        availableUpdate = nil
+        phase = .idle
+        isChecking = false
+        lastError = nil
+        didCheckWithoutUpdate = false
+    }
+#endif
+
     /// 真正重启前再确认 helper、payload 和版本，避免退出了才发现安装文件缺失。
     func restartAndInstall() {
         guard phase == .ready, let update = availableUpdate else { return }
