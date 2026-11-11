@@ -11,12 +11,13 @@ struct AuralUpdateBadgeSnapshotTests {
         #expect(!AuralUpdateBadge.showsDismiss(.preparing))
         #expect(!AuralUpdateBadge.showsDismiss(.ready))
         #expect(!AuralUpdateBadge.showsDismiss(.idle))
-        #expect(AuralUpdateBadge.usesTextPresentation(.available))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.failed("失败")))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.downloading(progress: 0.5)))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.preparing))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.ready))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.idle))
+        #expect(!AuralUpdateBadge.usesTextPresentation(.available, presentation: .capsule))
+        #expect(AuralUpdateBadge.usesTextPresentation(.available, presentation: .text))
+        #expect(!AuralUpdateBadge.usesTextPresentation(.failed("失败"), presentation: .text))
+        #expect(!AuralUpdateBadge.usesTextPresentation(.downloading(progress: 0.5), presentation: .text))
+        #expect(!AuralUpdateBadge.usesTextPresentation(.preparing, presentation: .text))
+        #expect(!AuralUpdateBadge.usesTextPresentation(.ready, presentation: .text))
+        #expect(!AuralUpdateBadge.usesTextPresentation(.idle, presentation: .text))
         #expect(L10n.text("未发现新版本", language: .english) == "No Updates Available")
     }
 
@@ -24,6 +25,8 @@ struct AuralUpdateBadgeSnapshotTests {
         let view = VStack(alignment: .leading, spacing: 10) {
             AuralUpdateBadge(phase: .available, version: "0.1.12", language: .chinese,
                              action: {}, skip: {})
+            AuralUpdateBadge(phase: .available, version: "0.1.12", language: .chinese,
+                             action: {}, skip: {}, presentation: .text)
             AuralUpdateBadge(phase: .downloading(progress: 0.64), version: "0.1.12", language: .chinese,
                              action: {}, skip: {})
             AuralUpdateBadge(phase: .preparing, version: "0.1.12", language: .chinese,
@@ -52,6 +55,8 @@ struct AuralUpdateBadgeSnapshotTests {
         let darkView = VStack(alignment: .leading, spacing: 10) {
             AuralUpdateBadge(phase: .available, version: "0.1.12", language: .english,
                              action: {}, skip: {})
+            AuralUpdateBadge(phase: .available, version: "0.1.12", language: .english,
+                             action: {}, skip: {}, presentation: .text)
             AuralUpdateBadge(phase: .downloading(progress: 0.64), version: "0.1.12", language: .english,
                              action: {}, skip: {})
             AuralUpdateBadge(phase: .preparing, version: "0.1.12", language: .english,

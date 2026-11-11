@@ -1,9 +1,15 @@
 import SwiftUI
 
+enum AuralUpdatePresentation {
+    case capsule
+    case text
+}
+
 /// 主面板和设置页共享同一个更新胶囊，避免两处状态文案和操作不一致。
 struct AuralUpdateCapsule: View {
     @ObservedObject var updates: AuralUpdateChecker
     @ObservedObject var settings: AppSettings
+    var presentation: AuralUpdatePresentation = .capsule
 
     var body: some View {
         if let update = updates.availableUpdate {
@@ -11,7 +17,8 @@ struct AuralUpdateCapsule: View {
                              version: update.version,
                              language: settings.resolvedLanguage,
                              action: primaryAction,
-                             skip: updates.skipAvailableUpdate)
+                             skip: updates.skipAvailableUpdate,
+                             presentation: presentation)
             .help(helpText(update: update))
             .accessibilityLabel(settings.localizedFormat("更新到 %@", update.version))
         }
@@ -42,13 +49,14 @@ struct AuralUpdateBadge: View {
     let language: AppLanguage
     let action: () -> Void
     let skip: () -> Void
+    var presentation: AuralUpdatePresentation = .capsule
     @StateObject private var hover = HoverState()
     private final class HoverState: ObservableObject {
         @Published var active = false
     }
 
     var body: some View {
-        if Self.usesTextPresentation(phase) {
+        if Self.usesTextPresentation(phase, presentation: presentation) {
             textPrompt
         } else {
             capsulePrompt
@@ -133,10 +141,10 @@ struct AuralUpdateBadge: View {
 
     private var canSkip: Bool { Self.showsDismiss(phase) }
 
-    /// 只有静态可更新状态使用文字；失败重试仍有明确操作语义，保持胶囊。
-    static func usesTextPresentation(_ phase: AuralUpdatePhase) -> Bool {
-        if case .available = phase { return true }
-        return false
+    /// 设置页的静态可更新状态使用文字；主面板始终保留紫色胶囊入口。
+    static func usesTextPresentation(_ phase: AuralUpdatePhase,
+                                     presentation: AuralUpdatePresentation) -> Bool {
+        presentation == .text && phase == .available
     }
 
     /// 只有用户可决定“暂不更新”的静止状态才显示关闭入口。
