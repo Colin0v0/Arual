@@ -8,7 +8,7 @@ struct PanelLoadingButtonTests {
         let state = LoadingState()
         let host = NSHostingView(rootView: LoadingFixture(state: state))
         host.frame.size = host.fittingSize
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         let button = try #require(findButton(in: host))
         let frame = button.convert(button.bounds, to: host)
         let titleSize = PanelActionMetrics.textSize("刷新")
@@ -17,7 +17,7 @@ struct PanelLoadingButtonTests {
 
         for _ in 0..<3 {
             state.loading = true
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             button.layoutSubtreeIfNeeded()
             let spinner = try #require(button.subviews.compactMap { $0 as? NSProgressIndicator }.first)
             #expect(button.isLoading)
@@ -34,7 +34,7 @@ struct PanelLoadingButtonTests {
             #expect(button.convert(button.bounds, to: host) == frame)
             #expect(button.bounds.size == titleSize)
             #expect(host.fittingSize == CGSize(width: titleSize.width, height: titleSize.height))
-            #expect(button.layer?.backgroundColor == NSColor(PanelStyle.controlHover).cgColor)
+            #expect(button.layer?.backgroundColor == PanelStyle.controlHoverNSColor(for: button.effectiveAppearance).cgColor)
             // 模拟模型刷新再次设置内容和禁用样式，文字也不能重新出现。
             button.setContent(.text("刷新"))
             button.isEnabled = false
@@ -44,7 +44,7 @@ struct PanelLoadingButtonTests {
             #expect(button.intrinsicContentSize == titleSize)
 
             state.loading = false
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             #expect(!button.isLoading)
             #expect(button.isEnabled)
             #expect(spinner.isHidden)

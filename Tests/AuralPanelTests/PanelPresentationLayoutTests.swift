@@ -85,16 +85,16 @@ struct PanelPresentationLayoutTests {
         layout.selectPage(0)
         let host = NSHostingView(rootView: PresentationFixture(state: state, layout: layout))
         host.frame.size = layout.size
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(layout.size.height == 368)
         host.frame.size = layout.size
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         layout.beginPresentation()
         let originalFrame = host.frame
         let notificationCount = state.reportedSizes.count
 
         state.headphoneHeight = 900
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(layout.size == originalFrame.size)
         #expect(host.frame == originalFrame)
         #expect(state.reportedSizes.count == notificationCount)
@@ -102,10 +102,10 @@ struct PanelPresentationLayoutTests {
         layout.selectPage(1)
         state.selection = 1
         host.frame.size = layout.size
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(layout.size.height == 674)
         state.headphoneHeight = 180
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(layout.size.height == 300) // 当前页变短时立即收起，不保留多余空白。
 
         for index in 0..<30 {
@@ -113,7 +113,7 @@ struct PanelPresentationLayoutTests {
             layout.selectPage(page)
             state.selection = page
             host.frame.size = layout.size
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             #expect(layout.size.height == (page == 0 ? 368 : 300))
             #expect(host.frame.width == PanelMetrics.width)
         }
@@ -122,7 +122,7 @@ struct PanelPresentationLayoutTests {
         // 模拟原生外框动画的中间尺寸；这些尺寸不能反过来改变目标高度。
         for height: CGFloat in [430, 400, 360, 320, 300] {
             host.frame.size = CGSize(width: PanelMetrics.width, height: height)
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             #expect(layout.size.height == 300)
         }
         #expect(state.reportedSizes.count == sizeEvents)
@@ -169,7 +169,7 @@ struct PanelPresentationLayoutTests {
             // 宿主先上报自然内容，再按目标外框完成布局；不把旧视口高度当作测量结果。
             for _ in 0..<3 {
                 host.frame.size = layout.size
-                host.layoutSubtreeIfNeeded()
+                PanelTestSupport.flushLayout(host)
             }
         }
         func scrollViews(in view: NSView) -> [NSScrollView] {

@@ -13,7 +13,7 @@ struct PanelPageMotionTests {
         controller.sizingOptions = []
         let host = controller.view
         host.frame = CGRect(x: 0, y: 0, width: PanelMetrics.width, height: 464)
-        let window = StatusPopupPanel(contentRect: CGRect(x: 400, y: 300, width: PanelMetrics.width, height: 464),
+        let window = StatusPopupPanel(contentRect: PanelTestSupport.windowFrame(size: CGSize(width: PanelMetrics.width, height: 464)),
                                       styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentViewController = controller
