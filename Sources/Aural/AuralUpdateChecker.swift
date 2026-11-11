@@ -105,13 +105,15 @@ final class AuralUpdateChecker: ObservableObject {
                     return
                 }
                 let skippedVersion = defaults.string(forKey: skippedVersionKey)
-                guard Self.shouldPresent(update: update, skippedVersion: skippedVersion) else {
+                guard Self.shouldPresent(update: update,
+                                         skippedVersion: skippedVersion,
+                                         manualCheck: force) else {
                     availableUpdate = nil
                     phase = .idle
                     didCheckWithoutUpdate = force
                     return
                 }
-                // 跳过只对当时那个版本生效；发现更高版本后清除旧记录。
+                // 手动检查可以重新展示被关闭的版本；点击更新后不能继续保留“已跳过”状态。
                 if skippedVersion != nil {
                     defaults.removeObject(forKey: skippedVersionKey)
                 }
@@ -227,8 +229,11 @@ final class AuralUpdateChecker: ObservableObject {
                                     archiveKind: .dmg)
     }
 
-    /// 同一个版本只要被用户关闭过就不再主动展示，更高版本会自动解除跳过状态。
-    nonisolated static func shouldPresent(update: AuralAvailableUpdate, skippedVersion: String?) -> Bool {
+    /// 关闭只抑制自动提示；用户主动检查时必须重新展示同一版本。
+    nonisolated static func shouldPresent(update: AuralAvailableUpdate,
+                                          skippedVersion: String?,
+                                          manualCheck: Bool) -> Bool {
+        if manualCheck { return true }
         guard let skippedVersion, let skipped = AuralVersionNumber(skippedVersion) else { return true }
         guard let version = AuralVersionNumber(update.version) else { return true }
         return version > skipped
