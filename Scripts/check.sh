@@ -5,7 +5,8 @@ cd "$(dirname "$0")/.."
 TOOLCHAIN_USR="$(dirname "$(dirname "$(xcrun --find swiftc)")")"
 TESTING_PLUGIN="$TOOLCHAIN_USR/lib/swift/host/plugins/testing/libTestingMacros.dylib"
 test -f "$TESTING_PLUGIN"
-swift test -Xswiftc -load-plugin-library -Xswiftc "$TESTING_PLUGIN"
+# 与 CI 一致串行运行：AppKit 窗口、滚动条与外观测试共享进程级状态。
+swift test --no-parallel -Xswiftc -load-plugin-library -Xswiftc "$TESTING_PLUGIN"
 ./Scripts/build-app.sh
 codesign --verify --strict dist/Aural.app
 ./dist/Aural.app/Contents/MacOS/Aural --diagnose

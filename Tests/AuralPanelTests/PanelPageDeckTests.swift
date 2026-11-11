@@ -130,6 +130,9 @@ struct PanelPageDeckTests {
         #expect(!scroll.hasHorizontalScroller)
         #expect(scroll.autohidesScrollers)
         #expect(scroll.scrollerStyle == .overlay)
+        // 模拟 SwiftUI 稍后异步写回系统偏好，策略必须在该属性变更时仍维持 overlay。
+        scroll.scrollerStyle = .legacy
+        #expect(scroll.scrollerStyle == .overlay)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
         #expect(scroll.contentView.bounds.origin.y == 120)
         #expect(policy.hitTest(.zero) == nil)

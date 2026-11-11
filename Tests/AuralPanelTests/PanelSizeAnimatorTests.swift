@@ -68,6 +68,25 @@ struct PanelSizeAnimatorTests {
         #expect(window.manualFrameCalls == 0)
     }
 
+    @Test @MainActor func returningToInitialFrameBeforeFirstAnimationFrameSupersedesOldTarget() {
+        let window = makeWindow()
+        defer { window.close() }
+        let animator = PanelSizeAnimator()
+        let original = window.frame
+        let shorter = CGRect(x: original.minX, y: original.maxY - 300, width: original.width, height: 300)
+        animator.resize(window: window, to: shorter, animated: true)
+        // 下一轮提交旧目标后立即回到原始尺寸；CI 可能尚未绘制任何中间帧。
+        RunLoop.main.perform(inModes: [.common]) {
+            MainActor.assumeIsolated {
+                animator.resize(window: window, to: original, animated: true)
+            }
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        #expect(window.frame == original)
+        #expect(window.manualFrameCalls == 0)
+        #expect(window.nativeRequests.last?.frame == original)
+    }
+
     @Test @MainActor func cancelStopsAnOldTargetFromResizingTheHiddenPanel() {
         let window = makeWindow()
         defer { window.close() }

@@ -20,6 +20,7 @@ final class PanelScrollPolicyView: NSView {
     private weak var observedDocument: NSView?
     private weak var observedClip: NSClipView?
     private var geometryObservers: [NSObjectProtocol] = []
+    private var scrollerStyleObserver: NSKeyValueObservation?
 
     deinit {
         for observer in geometryObservers { NotificationCenter.default.removeObserver(observer) }
@@ -65,6 +66,14 @@ final class PanelScrollPolicyView: NSView {
         geometryObservers.removeAll()
         observedDocument = document
         observedClip = clip
+        // SwiftUI 的后续提交可能重新写入系统滚动条样式；只监听这一所属容器的属性，
+        // 不靠定时重试或修改系统偏好，避免隐藏滚动条的布局策略被异步覆盖。
+        scrollerStyleObserver = scroll.observe(\.scrollerStyle, options: [.new]) { scroll, _ in
+            MainActor.assumeIsolated {
+                guard scroll.scrollerStyle != .overlay else { return }
+                scroll.scrollerStyle = .overlay
+            }
+        }
         document.postsFrameChangedNotifications = true
         clip.postsFrameChangedNotifications = true
         for view in [document, clip] {
