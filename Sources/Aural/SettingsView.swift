@@ -15,6 +15,7 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var updates = AuralUpdateChecker.shared
     @StateObject private var loginItem = LoginItemState()
+    @StateObject private var updateCheckHover = PanelRowHoverState()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -25,7 +26,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
             footer
         }
-        .padding(18)
+        .padding(SettingsMetrics.horizontalInset)
         .frame(width: SettingsMetrics.width, height: SettingsMetrics.height, alignment: .topLeading)
         .background(PanelStyle.canvas)
         .foregroundStyle(PanelStyle.ink)
@@ -148,7 +149,10 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .font(PanelStyle.captionFont)
-                .foregroundStyle(PanelStyle.secondary)
+                // 只变文字颜色，不增加悬停底板；检查中不呈现可点击的高亮。
+                .foregroundStyle(updateCheckHover.active && !updates.isChecking
+                                 ? PanelStyle.ink : PanelStyle.secondary)
+                .onHover { updateCheckHover.active = $0 }
                 .disabled(updates.isChecking)
             }
         }
@@ -190,6 +194,8 @@ struct SettingsView: View {
 }
 
 enum SettingsMetrics {
+    // 分组标题、设置项与分隔线共用窗口留白，内层不再叠加缩进。
+    static let horizontalInset: CGFloat = 18
     static let width: CGFloat = 500
     static let height: CGFloat = 470
     static let controlWidth: CGFloat = 238
@@ -211,8 +217,7 @@ struct SettingsCard<Content: View>: View {
             VStack(spacing: 0) {
                 content()
             }
-            .padding(.horizontal, 12)
-            // 设置行直接落在画布上，不再包一层厚重灰色卡片。
+            // 内容与分组标题直接对齐，不再叠加原卡片的水平留白。
         }
     }
 }
@@ -220,13 +225,10 @@ struct SettingsCard<Content: View>: View {
 struct SettingsRow<Control: View>: View {
     let title: String
     @ViewBuilder let control: () -> Control
-    @StateObject private var hover: PanelRowHoverState
 
-    /// 设置页真实行默认静止；截图测试用同一行布局渲染悬停首帧。
-    init(title: String, initiallyHovered: Bool = false, @ViewBuilder control: @escaping () -> Control) {
+    init(title: String, @ViewBuilder control: @escaping () -> Control) {
         self.title = title
         self.control = control
-        _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
     }
 
     var body: some View {
@@ -236,11 +238,8 @@ struct SettingsRow<Control: View>: View {
             Spacer(minLength: 12)
             control()
         }
-        // 卡片自身已有 12pt 外边距；行内再留 8pt，让悬停底板与标题保持稳定间距。
-        .padding(.horizontal, 8)
+        // 标题和说明与分组标题使用同一左边缘。
         .frame(height: SettingsMetrics.rowHeight)
-        .panelRowHover(hover.active, cornerRadius: 7)
-        .onHover { hover.active = $0 }
     }
 }
 
@@ -248,13 +247,11 @@ struct SettingsToggleRow: View {
     let title: String
     let detail: String
     @Binding var isOn: Bool
-    @StateObject private var hover: PanelRowHoverState
 
-    init(title: String, detail: String, isOn: Binding<Bool>, initiallyHovered: Bool = false) {
+    init(title: String, detail: String, isOn: Binding<Bool>) {
         self.title = title
         self.detail = detail
         _isOn = isOn
-        _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
     }
 
     var body: some View {
@@ -271,11 +268,8 @@ struct SettingsToggleRow: View {
                 .frame(width: SettingsMetrics.booleanControlWidth)
                 .accessibilityLabel(title)
         }
-        // 与普通设置行共用左侧留白，悬停底板与说明文字保持稳定距离。
-        .padding(.horizontal, 8)
+        // 标题和说明与分组标题使用同一左边缘。
         .padding(.vertical, 8)
         .frame(minHeight: 52)
-        .panelRowHover(hover.active, cornerRadius: 7)
-        .onHover { hover.active = $0 }
     }
 }

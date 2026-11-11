@@ -63,4 +63,45 @@ struct PanelToolbarTests {
         #expect(button.alphaValue == 0.4)
     }
 
+    @Test @MainActor func settingsAndQuitOnlyChangeForegroundWithoutMoving() {
+        // 设置和退出入口保持原有点击范围；悬停及按下都只改前景，不出现白色底板。
+        let settings = PanelActionButton(systemName: "gearshape", title: "设置", hoverStyle: .foregroundOnly)
+        let quit = PanelActionButton("退出", hoverStyle: .foregroundOnly) {}
+        #expect(settings.hoverStyle == .foregroundOnly)
+        #expect(quit.hoverStyle == .foregroundOnly)
+        for content in [settings.content, quit.content] {
+            let button = PanelActionControl(frame: NSRect(origin: .zero, size: PanelActionMetrics.square))
+            button.hoverStyle = .foregroundOnly
+            button.setContent(content)
+            let size = button.intrinsicContentSize
+            button.mouseEntered(with: NSEvent())
+            #expect(button.contentTintColor == NSColor(PanelStyle.ink))
+            #expect(button.layer?.backgroundColor == NSColor.clear.cgColor)
+            button.highlight(true)
+            #expect(button.layer?.backgroundColor == NSColor.clear.cgColor)
+            button.highlight(false)
+            button.mouseExited(with: NSEvent())
+            #expect(button.contentTintColor == NSColor(PanelStyle.secondary))
+            #expect(button.intrinsicContentSize == size)
+        }
+    }
+
+    @Test @MainActor func trailingActionsAlignVisibleEdgesWithoutChangingTargets() throws {
+        for content: PanelActionButton.Content in [.symbol("gearshape"), .text("Quit"), .text("退出")] {
+            let button = PanelActionControl(frame: NSRect(x: 0, y: 0, width: 60, height: 26))
+            let cell = try #require(button.cell as? PanelActionCell)
+            cell.alignsContentToTrailing = true
+            button.setContent(content)
+            let size = button.intrinsicContentSize
+            let visibleRect: NSRect
+            switch content {
+            case .symbol: visibleRect = cell.imageRect(forBounds: button.bounds)
+            case .text: visibleRect = cell.titleRect(forBounds: button.bounds)
+            }
+            #expect(visibleRect.maxX == button.bounds.maxX)
+            button.highlight(true)
+            #expect(button.intrinsicContentSize == size)
+        }
+    }
+
 }

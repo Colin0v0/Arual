@@ -449,7 +449,7 @@ public final class HeadphoneController: ObservableObject {
     private func beginClassicConnection() {
         guard !suspended, !shuttingDown, let output, family == .sony || family == .oppo else { return }
         do {
-            try HeadphoneRouteGuard.check(output.uid)
+            try HeadphoneConnectionGuard.check(output.uid)
             guard let address = HeadphonePhysicalIdentity.addressInOutputUID(output.uid) else {
                 throw AudioFailure("系统输出没有可验证的蓝牙硬件地址")
             }

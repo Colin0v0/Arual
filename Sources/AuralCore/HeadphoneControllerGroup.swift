@@ -41,11 +41,13 @@ public final class HeadphoneControllerGroup: ObservableObject {
 
     public func updateOutputs(_ outputs: [AudioOutput]) {
         guard !shuttingDown else { return }
-        let activeUIDs = Set(outputs.map(\.uid))
+        // 即使调用方未预筛选，也不能为音箱、显示器或仅支持系统音量的设备创建控制卡片。
+        let supported = outputs.filter { supports($0) }
+        let activeUIDs = Set(supported.map(\.uid))
         for entry in entries where !activeUIDs.contains(entry.id) {
             entry.controller.outputUnavailable()
         }
-        let next = outputs.map { output in
+        let next = supported.map { output in
             let driver = controller(for: output.uid)
             driver.updateOutput(output)
             return HeadphoneControlEntry(output: output, controller: driver)

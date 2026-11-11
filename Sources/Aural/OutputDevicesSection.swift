@@ -131,7 +131,7 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
                         .help(L10n.text(volume.writable
                                         ? (direction == .input ? "输入音量；不采集音频" : "设备音量；不会切换默认输出")
                                         : "设备音量只读", language: language))
-                    PanelPercentage(value: scalar)
+                    PanelPercentage(value: scalar, highlighted: hover.active)
                 } else {
                     Text(L10n.text(direction == .input ? "不支持输入音量" : "不支持系统音量",
                                    language: language)).font(PanelStyle.captionFont)
@@ -146,7 +146,7 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
         .padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 6)
         .frame(height: PanelMetrics.deviceRowHeight)
         .font(PanelStyle.bodyFont)
-        .panelRowHover(hover.active)
+        .panelContentHover(hover.active)
         .onHover { hover.active = $0 }
     }
 }
@@ -162,8 +162,12 @@ struct AudioDeviceIcon: View {
             .font(.system(size: 13, weight: .regular))
             .foregroundStyle(selected ? Color.white : (highlighted ? PanelStyle.ink : PanelStyle.secondary))
             .frame(width: 28, height: 28)
-            // 设备已选中时保留功能色；悬停只提升中性灰表面，不额外叠一层品牌色。
-            .background(selected ? PanelStyle.accent : (highlighted ? PanelStyle.iconHover : PanelStyle.surface),
-                        in: Circle())
+            // 整行悬停只让圆底轻微加深或提亮；已选中的蓝底保持不变。
+            .background {
+                Circle().fill(selected ? PanelStyle.accent : PanelStyle.surface)
+                    .overlay {
+                        Circle().fill(highlighted && !selected ? PanelStyle.iconHoverTint : .clear)
+                    }
+            }
     }
 }

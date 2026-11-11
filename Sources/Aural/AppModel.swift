@@ -133,9 +133,6 @@ final class AppModel: ObservableObject {
             }
             if state.phase == .failed { self.applicationListSettleDeadline = nil }
             if self.outputRouting != state { self.outputRouting = state }
-            if state.phase.isBusy {
-                self.headphones.prepareRouteChange(retaining: state.desired?.memberUIDs ?? [])
-            }
         }
         refresh()
         guard monitorsSystem else { return }
@@ -321,15 +318,11 @@ final class AppModel: ObservableObject {
         routeConfirmationTimer = timer
     }
 
-    /// 耳机页与协议驱动只消费这一份目标解析，不能把聚合设备传给界面而给驱动传真实成员。
+    /// 耳机页与驱动共用全部可控物理设备；播放路由切换不撤销仍在线耳机的控制资格。
     private func updateHeadphoneControl(from snapshot: SystemAudioSnapshot) {
         var next = headphoneControl
-        next.update(confirmed: outputRouting.confirmed, snapshot: snapshot, supports: { headphones.supports($0) })
+        next.update(snapshot: snapshot, supports: { headphones.supports($0) })
         if next != headphoneControl { headphoneControl = next }
-        if outputRouting.phase.isBusy {
-            headphones.prepareRouteChange(retaining: outputRouting.desired?.memberUIDs ?? [])
-            return
-        }
         headphones.updateOutputs(next.candidates)
     }
 

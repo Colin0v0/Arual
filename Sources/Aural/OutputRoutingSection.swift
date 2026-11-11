@@ -308,15 +308,18 @@ private struct SimultaneousOutputDeviceRow: View {
                     // 勾选图标表达真实路由状态，继续使用功能色；悬停本身不改变它。
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 13))
-                        .foregroundStyle(selected ? PanelStyle.accent : PanelStyle.secondary)
-                    Image(systemName: output.symbol)
-                        .font(.system(size: 12, weight: .medium))
-                        // 输出图标只在悬停时提高中性灰对比，不出现蓝色悬停高亮。
                         .foregroundStyle(selected ? PanelStyle.accent
                                          : (hover.active ? PanelStyle.ink : PanelStyle.secondary))
+                        // 空心圈悬停仅加淡底和提高轮廓对比，不提前显示勾选。
+                        .background {
+                            Circle().fill(hover.active && !selected ? PanelStyle.iconHoverTint : .clear)
+                        }
+                    Image(systemName: output.symbol)
+                        .font(.system(size: 12, weight: .medium))
+                        // 多设备行仅选择圆圈跟随整行悬停，设备字形和底面保持静止。
+                        .foregroundStyle(selected ? PanelStyle.accent : PanelStyle.secondary)
                         .frame(width: 22, height: 22)
-                        .background(hover.active ? PanelStyle.iconHover : PanelStyle.iconSurface,
-                                    in: RoundedRectangle(cornerRadius: 5))
+                        .background(PanelStyle.iconSurface, in: RoundedRectangle(cornerRadius: 5))
                     Text(output.name)
                         .lineLimit(1)
                         .minimumScaleFactor(0.9)
@@ -379,7 +382,7 @@ private struct SimultaneousOutputDeviceRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: PanelMetrics.deviceRowHeight)
-        .panelRowHover(hover.active, cornerRadius: 6)
+        .panelContentHover(hover.active)
         .onHover { hover.active = $0 }
     }
 }
@@ -430,7 +433,7 @@ struct SimultaneousOutputRow: View {
                                           label: L10n.text("同时输出总音量", language: language))
                             .frame(minWidth: PanelMetrics.compactSliderMinimumWidth)
                             .disabled(!control.volumeWritable)
-                        PanelPercentage(value: scalar)
+                        PanelPercentage(value: scalar, highlighted: hover.active)
                     } else {
                         Text(L10n.text("不支持统一音量", language: language))
                             .font(PanelStyle.captionFont)
@@ -459,7 +462,7 @@ struct SimultaneousOutputRow: View {
         }
         .frame(height: PanelMetrics.deviceRowHeight)
         .font(PanelStyle.bodyFont)
-        .panelRowHover(hover.active)
+        .panelContentHover(hover.active)
         .onHover { hover.active = $0 }
     }
 
@@ -469,7 +472,7 @@ struct SimultaneousOutputRow: View {
             Text(title).lineLimit(1).foregroundStyle(PanelStyle.ink)
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(PanelStyle.secondary)
+                .foregroundStyle(hover.active ? PanelStyle.ink : PanelStyle.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

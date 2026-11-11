@@ -100,7 +100,7 @@ jobs:
         id: package
         shell: bash
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
           ./Scripts/build-dmg.sh
@@ -124,9 +124,11 @@ jobs:
           cat > "$NOTES" <<EOF
           ## Aural $VERSION 开发预览
 
-          1. 设置页和输出设备的整行悬停改为中性灰，不再使用蓝色渐变或左侧强调条。
-          2. 新增 release/* PR 合并后自动构建、校验并发布 DMG 与 SHA-256 的工作流。
-          3. 更新检查改用 GitHub Releases Atom 源，避开匿名 REST API 配额，并支持从 DMG 安装更新。
+          1. 主面板改用局部图标、读数和选择圆圈的轻量悬停反馈，移除整行灰框，并对齐首尾可见内容边距。
+          2. 设置页移除卡片底和整行悬停，统一中性分段控件、分组对齐与简短英文文案；右键仅保留打开、设置和退出。
+          3. 耳机控制列出所有已连接且支持协议的耳机，不要求作为当前输出；控制降噪不会切换媒体或提示音输出。
+          4. 新增 release/* PR 合并后自动构建、校验并发布 DMG 与 SHA-256 的工作流。
+          5. 更新检查改用 GitHub Releases Atom 源，避开匿名 REST API 配额，并支持从 DMG 安装更新。
 
           ### 安装与更新
 

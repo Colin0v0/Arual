@@ -218,24 +218,10 @@ final class StatusPanelController: NSObject {
     private func showStatusItemMenu() {
         guard let button = statusItem.button else { return }
         // 右键只叠加菜单，不关闭已展开的主面板；关闭菜单后保留原页签和窗口位置。
-        // 菜单保持极简：打开、菜单栏电量开关、版本、设置和退出。
-        let updates = AuralUpdateChecker.shared
-        let restartVersion: String?
-        if case .ready = updates.phase {
-            restartVersion = updates.availableUpdate?.version
-        } else {
-            restartVersion = nil
-        }
+        // 右键仅提供打开、设置与退出；不混入偏好开关和禁用的信息项。
         let menu = StatusItemMenu.make(openPanel: { [weak self] in self?.showPopup() },
                                        openSettings: { [weak self] in self?.showSettings() },
-                                       showBattery: AppSettings.shared.showCurrentDeviceBattery,
-                                       toggleBattery: {
-                                           AppSettings.shared.showCurrentDeviceBattery.toggle()
-                                       },
                                        quit: { NSApp.terminate(nil) },
-                                       version: AuralVersion.current,
-                                       restartVersion: restartVersion,
-                                       restartUpdate: { updates.restartAndInstall() },
                                        language: AppSettings.shared.resolvedLanguage)
         // 临时交给 NSStatusItem 的原生菜单路径，由 AppKit 选择屏幕、菜单栏下方的位置和高亮。
         // 普通 NSMenu.popUp 是视图弹出菜单，不具备状态栏菜单的锚定行为，可能覆盖菜单栏。

@@ -83,13 +83,13 @@ public enum AppleHeadphoneHAL {
         return [.off, .cancellation, .transparency, .adaptive].filter { modes.contains($0) }
     }
 
-    /// 设备 ID 可能在蓝牙重连后被复用，每次操作都同时核对 UID、存活状态及当前播放路由。
+    /// 设备 ID 可能在蓝牙重连后被复用，每次操作都同时核对 UID、存活状态及蓝牙连接。
     public static func validateControlTarget(_ output: AudioOutput) throws {
         guard try HAL.string(output.id, kAudioDevicePropertyDeviceUID) == output.uid,
               try HAL.read(output.id, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: UInt32(0)) != 0 else {
             throw AudioFailure("Apple 耳机身份已改变或设备已断开")
         }
-        try HeadphoneRouteGuard.check(output.uid)
+        try HeadphoneConnectionGuard.check(output.uid)
     }
 
     /// 只提交一次写入。异步读回和取消由控制器完成，不在后台留一条不可取消的 sleep/write 链路。

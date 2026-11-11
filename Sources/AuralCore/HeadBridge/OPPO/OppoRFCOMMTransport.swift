@@ -43,7 +43,7 @@ final class OppoRFCOMMTransport: NSObject {
         let expectedGeneration = generation
         requestedDisconnect = false
         boundOutputUID = outputUID
-        do { try HeadphoneRouteGuard.check(outputUID) }
+        do { try HeadphoneConnectionGuard.check(outputUID) }
         catch { fail(error.localizedDescription); return }
 
         guard let device = IOBluetoothDevice(addressString: address) else {
@@ -81,7 +81,7 @@ final class OppoRFCOMMTransport: NSObject {
     func send(_ data: Data) -> IOReturn {
         do {
             guard let boundOutputUID else { throw AudioFailure("耳机传输没有绑定系统输出") }
-            try HeadphoneRouteGuard.check(boundOutputUID)
+            try HeadphoneConnectionGuard.check(boundOutputUID)
         } catch {
             fail(error.localizedDescription)
             return kIOReturnNotPermitted

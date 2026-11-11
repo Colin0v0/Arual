@@ -84,12 +84,12 @@ struct ApplicationMixerRow: View {
                               label: L10n.format("%@ 的独立增益", language: language, arguments: [app.label]))
                 .frame(minWidth: PanelMetrics.compactSliderMinimumWidth)
                 .help(L10n.text("应用播放增益，不影响麦克风输入", language: language))
-            PanelPercentage(value: state.gain)
+            PanelPercentage(value: state.gain, highlighted: hover.active)
         }
         .padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 9)
-        .panelRowHover(hover.active)
+        .panelContentHover(hover.active)
         .onHover { hover.active = $0 }
-        // 应用行内部有单独的静音、滑杆悬停；整行底色用更短缓动跟随鼠标，避免两层反馈错拍。
+        // 应用行仅改变读数颜色，不再绘制包住整行的灰框。
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hover.active)
         .help(state.failure.map { L10n.text($0, language: language) }
               ?? L10n.format("%@；右键打开应用操作", language: language, arguments: [status]))

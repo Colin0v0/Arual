@@ -137,6 +137,13 @@ struct AudioPanel: View {
         layout.size
     }
 
+    // 按可见内容而非透明点击框对齐右边距，中英文使用同一规则。
+    private func trailingAction(_ button: PanelActionButton) -> PanelActionButton {
+        var button = button
+        button.alignsContentToTrailing = true
+        return button
+    }
+
     private var header: some View {
         HStack(spacing: 7) {
             // 主面板与菜单栏、App 图标使用同一个品牌标记。
@@ -145,8 +152,8 @@ struct AudioPanel: View {
             Spacer()
             updateBadge
             // 齿轮就是设置入口，左键直接打开设置窗口；诊断与系统权限留在右键菜单。
-            PanelActionButton(systemName: "gearshape", title: settings.localized("设置"),
-                              action: openSettings, menu: makeOptionsMenu)
+            trailingAction(PanelActionButton(systemName: "gearshape", title: settings.localized("设置"),
+                              hoverStyle: .foregroundOnly, action: openSettings, menu: makeOptionsMenu))
                 .frame(width: PanelActionMetrics.size, height: PanelActionMetrics.size)
         }
     }
@@ -159,10 +166,10 @@ struct AudioPanel: View {
         VStack(spacing: 0) {
             PanelDivider()
             HStack {
-                // 权限与版本仍放在工具菜单，不把技术说明常驻成界面装饰。
-                Text(settings.localized("音频控制")).foregroundStyle(PanelStyle.secondary)
+                // 底栏显示真实版本号，跟随发布版本自动更新，不提供点击或悬停装饰。
+                Text("v\(AuralVersion.current)").foregroundStyle(PanelStyle.secondary)
                 Spacer()
-                PanelActionButton(settings.localized("退出")) { NSApp.terminate(nil) }
+                trailingAction(PanelActionButton(settings.localized("退出"), hoverStyle: .foregroundOnly) { NSApp.terminate(nil) })
                     .help(settings.localized("退出 Aural"))
             }.padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 3)
         }

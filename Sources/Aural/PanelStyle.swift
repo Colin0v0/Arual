@@ -29,6 +29,9 @@ enum PanelStyle {
                                        dark: NSColor(red: 0.20, green: 0.20, blue: 0.21, alpha: 1))
     static let iconSurface = adaptive(light: NSColor(white: 1, alpha: 0.72),
                                       dark: NSColor(red: 0.27, green: 0.27, blue: 0.29, alpha: 1))
+    /// 局部图标底面叠一层中性色：浅色轻压暗、深色轻提亮，不绘制整行底板。
+    static let iconHoverTint = adaptive(light: NSColor(white: 0, alpha: 0.045),
+                                        dark: NSColor(white: 1, alpha: 0.065))
     static let prominentFill = adaptive(light: NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
                                         dark: NSColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1))
     static let prominentInk = adaptive(light: .white, dark: NSColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1))
@@ -42,17 +45,6 @@ enum PanelStyle {
     static let updateSolid = adaptive(light: NSColor(red: 0.34, green: 0.27, blue: 0.87, alpha: 1),
                                       dark: NSColor(red: 0.44, green: 0.36, blue: 1, alpha: 1))
     static let updateSolidInk = Color.white
-    /// 悬停只做中性灰的层次变化，不用蓝色染色抢占设备选中态和功能色。
-    /// 浅色用黑灰提亮，深色用白灰提亮，两者保持一致的视觉重量。
-    static let rowHover = adaptive(light: NSColor(white: 0, alpha: 0.055),
-                                   dark: NSColor(white: 1, alpha: 0.075))
-    static let rowHoverBorder = adaptive(light: NSColor(white: 0, alpha: 0.08),
-                                         dark: NSColor(white: 1, alpha: 0.10))
-    /// 阴影只落在行的圆角底板下方，不包住文字，避免悬停时出现模糊字形。
-    static let rowHoverGlow = adaptive(light: NSColor(white: 0, alpha: 0.06),
-                                       dark: NSColor(white: 0, alpha: 0.18))
-    static let iconHover = adaptive(light: NSColor(white: 0.92, alpha: 1),
-                                    dark: NSColor(white: 1, alpha: 0.10))
     static let error = adaptive(light: NSColor(red: 0.69, green: 0.20, blue: 0.20, alpha: 1),
                                 dark: NSColor(red: 1.0, green: 0.42, blue: 0.42, alpha: 1))
     static let radius: CGFloat = 11
@@ -321,12 +313,13 @@ struct PanelTabButtonStyle: ButtonStyle {
 /// 系统音量与应用增益使用同一种读数布局，100% 也不允许换行。
 struct PanelPercentage: View {
     let value: Float
+    var highlighted = false
 
     var body: some View {
         Text(value, format: .percent.precision(.fractionLength(0)))
             .font(PanelStyle.bodyFont)
             .monospacedDigit()
-            .foregroundStyle(PanelStyle.secondary)
+            .foregroundStyle(highlighted ? PanelStyle.ink : PanelStyle.secondary)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .frame(width: PanelStyle.percentageWidth, alignment: .trailing)
@@ -349,7 +342,7 @@ struct PanelError: View {
     }
 }
 
-/// 列表行与设置行共用同一套悬停状态，避免每处自行决定底色、圆角和动画时长。
+/// 列表内容共用悬停状态，仅用于图标、读数等局部颜色反馈。
 @MainActor
 final class PanelRowHoverState: ObservableObject {
     @Published var active: Bool
@@ -360,31 +353,19 @@ final class PanelRowHoverState: ObservableObject {
     }
 }
 
-/// 整行悬停使用中性灰底板、细描边和低位阴影。
-/// 不使用位移或缩放，鼠标扫过时文字与滑杆保持原位，不会产生布局抖动。
-private struct PanelRowHoverModifier: ViewModifier {
+/// 悬停只为行内图标和读数提供短颜色过渡，不再绘制整行底板、描边或阴影。
+/// 不缩放、不位移，尊重“减少动态效果”，鼠标扫过时布局保持稳定。
+private struct PanelContentHoverModifier: ViewModifier {
     let active: Bool
-    let cornerRadius: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        content
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(active ? PanelStyle.rowHover : Color.clear)
-                    .shadow(color: active ? PanelStyle.rowHoverGlow : .clear, radius: 3, y: 1)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(active ? PanelStyle.rowHoverBorder : Color.clear, lineWidth: 1)
-            }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: active)
+        content.animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: active)
     }
 }
 
 extension View {
-    func panelRowHover(_ active: Bool, cornerRadius: CGFloat = 8) -> some View {
-        modifier(PanelRowHoverModifier(active: active, cornerRadius: cornerRadius))
+    func panelContentHover(_ active: Bool) -> some View {
+        modifier(PanelContentHoverModifier(active: active))
     }
 }
-

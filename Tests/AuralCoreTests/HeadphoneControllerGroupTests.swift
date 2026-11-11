@@ -5,6 +5,16 @@ import Testing
 
 @MainActor
 struct HeadphoneControllerGroupTests {
+    @Test func unsupportedOutputsNeverBecomeControlEntries() {
+        let fixture = GroupHardwareFixture()
+        let group = HeadphoneControllerGroup(makeController: fixture.makeController)
+        let speaker = AudioOutput(id: 70, uid: "speaker", name: "Bluetooth Speaker", transport: kAudioDeviceTransportTypeBluetooth)
+        let monitor = AudioOutput(id: 71, uid: "display", name: "Display", transport: kAudioDeviceTransportTypeDisplayPort)
+        group.updateOutputs([speaker, first, monitor])
+        #expect(group.entries.map(\.id) == [first.uid])
+        group.shutdown()
+    }
+
     @Test func routeTransitionKeepsVerifiedIdleControllersWithoutAllowingCommands() throws {
         let fixture = GroupHardwareFixture()
         let group = HeadphoneControllerGroup(makeController: fixture.makeController)

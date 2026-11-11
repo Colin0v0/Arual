@@ -36,7 +36,7 @@ struct PanelHoverSnapshotTests {
 
         let settingsPage = VStack(alignment: .leading, spacing: 14) {
             SettingsCard(title: "通用") {
-                SettingsRow(title: "界面语言", initiallyHovered: true) {
+                SettingsRow(title: "界面语言") {
                     PanelSegmentedControl(items: AppLanguage.allCases,
                                           selection: .constant(AppLanguage.chinese),
                                           title: { language in
@@ -56,8 +56,7 @@ struct PanelHoverSnapshotTests {
             SettingsCard(title: "功能") {
                 SettingsToggleRow(title: "显示当前设备剩余电量",
                                   detail: "在菜单栏 Aural 图标右侧显示当前设备电量。",
-                                  isOn: .constant(true),
-                                  initiallyHovered: true)
+                                  isOn: .constant(true))
             }
         }
         .padding(18)
@@ -85,6 +84,67 @@ struct PanelHoverSnapshotTests {
         try render(settingsPage.preferredColorScheme(.dark),
                    path: "/tmp/aural-settings-hover-dark.png", dark: true)
         #expect(outputs.count == 3)
+    }
+
+    @Test @MainActor func contentHoverDoesNotDrawARowSurface() throws {
+        // 控件自行改变前景色；共享悬停修饰器不能再添加底板、边框或阴影。
+        for scheme in [ColorScheme.light, .dark] {
+            func pixels(active: Bool) throws -> Data {
+                let renderer = ImageRenderer(content:
+                    Text("Device")
+                        .frame(width: 240, height: 40)
+                        .panelContentHover(active)
+                        .background(PanelStyle.canvas)
+                        .environment(\.colorScheme, scheme)
+                )
+                return try renderedPixels(renderer, scheme: scheme)
+            }
+            #expect(try pixels(active: false) == pixels(active: true))
+        }
+    }
+
+    @Test @MainActor func iconBackgroundRespondsWithoutChangingSelectionOrSize() throws {
+        // 圆底反馈只作用于未选中项；选中蓝色和 28pt 占位必须保持一致。
+        for scheme in [ColorScheme.light, .dark] {
+            func pixels(selected: Bool, hovered: Bool) throws -> Data {
+                let renderer = ImageRenderer(content:
+                    AudioDeviceIcon(symbol: "laptopcomputer", selected: selected, highlighted: hovered)
+                        .environment(\.colorScheme, scheme)
+                )
+                return try renderedPixels(renderer, scheme: scheme, expectedSize: CGSize(width: 28, height: 28))
+            }
+            // 取圆底内部、字形之外的像素，避免把 SF Symbol 的首次栅格化差异当成底色变化。
+            let sample = (14 * 28 + 2) * 4
+            #expect(try pixels(selected: false, hovered: false)[sample..<(sample + 4)]
+                    != pixels(selected: false, hovered: true)[sample..<(sample + 4)])
+            #expect(try pixels(selected: true, hovered: false)[sample..<(sample + 4)]
+                    == pixels(selected: true, hovered: true)[sample..<(sample + 4)])
+        }
+    }
+
+    /// 固定 AppKit 动态颜色的解析外观，并比较原始像素，不比较带编码元数据的 TIFF。
+    @MainActor private func renderedPixels<V: View>(_ renderer: ImageRenderer<V>, scheme: ColorScheme,
+                                                   expectedSize: CGSize? = nil) throws -> Data {
+        let appearance = try #require(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
+        var image: CGImage?
+        appearance.performAsCurrentDrawingAppearance { image = renderer.cgImage }
+        let rendered = try #require(image)
+        if let expectedSize {
+            #expect(rendered.width == Int(expectedSize.width))
+            #expect(rendered.height == Int(expectedSize.height))
+        }
+        // 统一成零初始化的 RGBA 缓冲区，忽略 CGImage 行尾填充和未定义的透明像素通道。
+        let width = rendered.width
+        let height = rendered.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try #require(CGContext(data: buffer.baseAddress, width: width, height: height,
+                                                 bitsPerComponent: 8, bytesPerRow: width * 4,
+                                                 space: CGColorSpaceCreateDeviceRGB(),
+                                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(rendered, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        return Data(bytes)
     }
 
     /// 原生 Picker、Toggle 和 NSButton 必须通过真实宿主绘制；ImageRenderer 会把它们画成禁止符号。
