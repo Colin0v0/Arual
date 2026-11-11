@@ -129,7 +129,7 @@ struct SettingsView: View {
                 .foregroundStyle(PanelStyle.secondary)
             Spacer()
             if updates.availableUpdate != nil {
-                AuralUpdateCapsule(updates: updates, settings: settings)
+                AuralUpdateCapsule(updates: updates, settings: settings, presentation: .text)
             } else if updates.didCheckWithoutUpdate {
                 Text(settings.localized("未发现新版本"))
                     .font(PanelStyle.captionFont)
