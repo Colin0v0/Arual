@@ -11,7 +11,7 @@ struct ApplicationVolumeSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("APP").font(.system(size: 11, weight: .medium)).foregroundStyle(PanelStyle.secondary)
-                .padding(.leading, 12)
+                .padding(.leading, PanelMetrics.horizontalInset)
             if let reason = model.applicationAudioUnavailableReason {
                 // 系统多输出负责原始播放；不展示看似可用、实际只有单流能力的应用滑杆。
                 Text(L10n.text(reason, language: language))
@@ -47,7 +47,8 @@ struct ApplicationVolumeSection: View {
                 .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity).padding(.vertical, 18).padding(.horizontal, 14)
+        .frame(maxWidth: .infinity).padding(.vertical, 18)
+            .padding(.horizontal, PanelMetrics.horizontalInset)
     }
 
     private func applicationRow(_ app: ApplicationAudioRow, state: ApplicationMixState) -> some View {

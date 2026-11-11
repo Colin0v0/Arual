@@ -143,7 +143,7 @@ struct AudioDeviceRow<Device: AudioDeviceDescriptor>: View {
                     .frame(maxWidth: .infinity, alignment: .trailing).help(message)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 6)
+        .padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 6)
         .frame(height: PanelMetrics.deviceRowHeight)
         .font(PanelStyle.bodyFont)
         .panelRowHover(hover.active)

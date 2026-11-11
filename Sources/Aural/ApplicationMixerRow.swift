@@ -86,7 +86,7 @@ struct ApplicationMixerRow: View {
                 .help(L10n.text("应用播放增益，不影响麦克风输入", language: language))
             PanelPercentage(value: state.gain)
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
+        .padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 9)
         .panelRowHover(hover.active)
         .onHover { hover.active = $0 }
         // 应用行内部有单独的静音、滑杆悬停；整行底色用更短缓动跟随鼠标，避免两层反馈错拍。

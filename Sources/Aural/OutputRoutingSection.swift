@@ -26,7 +26,7 @@ struct OutputRoutingErrorRow: View {
             }
         }
         .frame(minHeight: PanelActionMetrics.size)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, PanelMetrics.horizontalInset)
     }
 }
 
@@ -95,24 +95,28 @@ struct OutputRoutingSection: View {
                 Text(selectedUnmanagedOutput
                      ? L10n.text("选择一台扬声器继续播放", language: language)
                      : L10n.text("上次的同时输出还在，清理后可重新设置", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if routing.phase.isBusy {
                 Text(L10n.text("正在等待系统确认输出…", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if routing.phase == .awaitingMembers {
                 Text(L10n.text("已选设备均暂不可用，等待原设备恢复", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             } else if !routing.phase.isBusy, routing.confirmed != nil, !routing.unavailableMemberUIDs.isEmpty {
                 Text(L10n.text("部分设备暂不可用，正通过其余已选设备播放；恢复后自动加入", language: language))
-                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                    .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if let warning = routing.warning {
                 Text(L10n.text(warning, language: language))
                     .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
             }
             if let error {
                 OutputRoutingErrorRow(text: L10n.text(error, language: language),
@@ -120,17 +124,20 @@ struct OutputRoutingSection: View {
                                       dismiss: dismissError)
                 if let actual = routing.actualOutput {
                     Text(L10n.format("实际输出：%@", language: language, arguments: [actual.name]))
-                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                        .padding(.horizontal, PanelMetrics.horizontalInset)
                 }
                 if let systemID = routing.actualSystemOutputID,
                    systemID != routing.actualOutput?.id,
                    let systemOutput = audio.outputs.first(where: { $0.id == systemID }) {
                     Text(L10n.format("提示音输出：%@", language: language, arguments: [systemOutput.name]))
-                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                        .padding(.horizontal, PanelMetrics.horizontalInset)
                 }
                 if !routing.completedSteps.isEmpty {
                     Text(routing.completedSteps.map { L10n.text($0, language: language) }.joined(separator: " · "))
-                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(.horizontal, 12)
+                        .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
+                        .padding(.horizontal, PanelMetrics.horizontalInset)
                 }
             }
             if selection.isChoosing {
@@ -196,7 +203,7 @@ struct OutputRoutingSection: View {
                         PanelActionButton(L10n.text("清理残留设备", language: language), action: stop)
                         Spacer()
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
                     .frame(height: PanelMetrics.deviceRowHeight)
                 }
             } else if showSimultaneousOutput {
@@ -256,7 +263,7 @@ struct SimultaneousOutputEditor: View {
         .overlay {
             RoundedRectangle(cornerRadius: 9).strokeBorder(PanelStyle.line.opacity(0.8), lineWidth: 1)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, PanelMetrics.horizontalInset)
         .padding(.top, 6)
         .padding(.bottom, 2)
     }
@@ -431,7 +438,7 @@ struct SimultaneousOutputRow: View {
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, PanelMetrics.horizontalInset)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 // 未启用时整行就是设置入口，不再额外放一个“设置”文字。
@@ -440,7 +447,7 @@ struct SimultaneousOutputRow: View {
                         identity
                         Spacer()
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, PanelMetrics.horizontalInset)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }

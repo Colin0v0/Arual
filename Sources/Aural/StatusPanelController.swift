@@ -294,6 +294,9 @@ enum PanelMetrics {
     static let maximumContentHeight: CGFloat = 560
     static let chromeHeight: CGFloat = 114
     static let contentWidth: CGFloat = width - 24
+    // 主面板所有左右留白只由这一个常量决定；行内 padding 是唯一水平入口，
+    // 外层容器不再叠加水平留白，避免左边出现双重缩进而右边只有一层。
+    static let horizontalInset: CGFloat = 12
     static let deviceRowHeight: CGFloat = 40
     static let deviceSelectionWidth: CGFloat = 176
     static let compactSliderMinimumWidth: CGFloat = 136

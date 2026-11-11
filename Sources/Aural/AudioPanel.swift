@@ -26,7 +26,7 @@ struct AudioPanel: View {
         // 原生容器是显示高度的唯一来源，动画中的中间高度只用于排版，不回写目标尺寸。
         GeometryReader { container in
             VStack(spacing: 0) {
-                header.padding(.horizontal, 12).frame(height: 44)
+                header.padding(.horizontal, PanelMetrics.horizontalInset).frame(height: 44)
                 PanelTabs(items: pages, selection: currentPage,
                           title: { $0.title(language: settings.resolvedLanguage) }) { page in
                     // 单层导航直接选择内容页，并按该页的自然高度调整原生外框。
@@ -35,7 +35,7 @@ struct AudioPanel: View {
                     model.setApplicationMetersSelected(applicationMetersSelected, for: surface)
                 }
                 .accessibilityLabel(settings.localized("控制区域"))
-                .padding(.horizontal, 12).padding(.bottom, 9)
+                .padding(.horizontal, PanelMetrics.horizontalInset).padding(.bottom, 9)
 
                 // 三个内容页各自保留测量与滚动位置，耳机页不再被设备列表或麦克风页撑高。
                 PanelPageViewport(items: pages, selection: currentPage,
@@ -54,7 +54,8 @@ struct AudioPanel: View {
                             HeadphoneControlsSection(group: model.headphones)
                         }
                     }
-                    .padding(.horizontal, 12).padding(.top, 1).padding(.bottom, 12)
+                    // 内容页不再叠加外层水平 padding；设备行和应用行的行内留白负责左右对称。
+                    .padding(.top, 1).padding(.bottom, 12)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 footer.frame(height: 34)
@@ -114,7 +115,7 @@ struct AudioPanel: View {
             case .input:
                 microphoneControls
             }
-            PanelDivider().padding(.horizontal, 12)
+            PanelDivider().padding(.horizontal, PanelMetrics.horizontalInset)
             // 两个设备页都使用相同模型与回调，APP 音量依然是播放增益，不冒充麦克风混音。
             ApplicationVolumeSection(model: model, metersVisible: metersVisible)
         }
@@ -122,8 +123,8 @@ struct AudioPanel: View {
 
     private var microphoneControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let error = model.inputError { PanelError(text: settings.localized(error)).padding(.horizontal, 12) }
-            if let error = model.inputOperationError { PanelError(text: settings.localized(error)).padding(.horizontal, 12) }
+            if let error = model.inputError { PanelError(text: settings.localized(error)).padding(.horizontal, PanelMetrics.horizontalInset) }
+            if let error = model.inputOperationError { PanelError(text: settings.localized(error)).padding(.horizontal, PanelMetrics.horizontalInset) }
             if let input = model.inputAudio {
                 InputDevicesSection(audio: input, select: model.selectInput,
                                     setVolume: { model.setInputVolume($0, on: $1) },
@@ -163,7 +164,7 @@ struct AudioPanel: View {
                 Spacer()
                 PanelActionButton(settings.localized("退出")) { NSApp.terminate(nil) }
                     .help(settings.localized("退出 Aural"))
-            }.padding(.leading, 15).padding(.trailing, 12).padding(.vertical, 3)
+            }.padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 3)
         }
     }
 

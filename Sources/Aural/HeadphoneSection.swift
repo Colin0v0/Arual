@@ -64,7 +64,7 @@ struct HeadphoneSection: View {
                 header.padding(12)
                 // 只有提示或已连接控制项才占用下一块，扫描结果不再撑出额外列表。
                 if hasDetails {
-                    PanelDivider().padding(.leading, 12)
+                    PanelDivider().padding(.leading, PanelMetrics.horizontalInset)
                     VStack(alignment: .leading, spacing: 10) {
                         if let error = controller.errorMessage {
                             // 真实错误只显示一次；不把连接失败伪装成未连接的正常状态。

@@ -110,6 +110,11 @@ struct OutputDevicesLayoutTests {
         #expect(host.frame.height <= 80)
     }
 
+    @Test func panelUsesOneHorizontalInsetForSymmetricContent() {
+        // 内容宽度与顶栏、行内共用同一个常量，避免外层容器再叠加第二层水平缩进。
+        #expect(PanelMetrics.contentWidth == PanelMetrics.width - PanelMetrics.horizontalInset * 2)
+    }
+
     // 只用于布局测试的明确夹具，不写入产品数据源，不修改真实设备或默认输出。
     static var fixture: SystemAudioSnapshot {
         let outputs = [
