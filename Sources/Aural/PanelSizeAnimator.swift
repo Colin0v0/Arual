@@ -54,7 +54,10 @@ final class PanelSizeAnimator {
 
     private func apply(target: CGRect, to window: NSWindow, animated: Bool) {
         NSAnimationContext.runAnimationGroup { context in
-            if animated && window.frame != target {
+            if animated {
+                // 即使目标等于当前外框，也必须提交给同一个原生 animator。
+                // 旧动画可能尚未推进首帧；此时改走同步 setFrame 不会撤销旧目标，
+                // 快速反向切页就会被稍后到达的旧动画覆盖。
                 // 与 Magpie 的 macOS 路径一样，只提交一次目标，不自行调度中间帧。
                 context.duration = PanelStyle.resizeDuration
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
