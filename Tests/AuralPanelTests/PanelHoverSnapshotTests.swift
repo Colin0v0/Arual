@@ -37,13 +37,15 @@ struct PanelHoverSnapshotTests {
         let settingsPage = VStack(alignment: .leading, spacing: 14) {
             SettingsCard(title: "通用") {
                 SettingsRow(title: "界面语言", initiallyHovered: true) {
-                    Picker("", selection: .constant(AppLanguage.chinese)) {
-                        Text("跟随系统").tag(AppLanguage.system)
-                        Text("简体中文").tag(AppLanguage.chinese)
-                        Text("English").tag(AppLanguage.english)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
+                    PanelSegmentedControl(items: AppLanguage.allCases,
+                                          selection: .constant(AppLanguage.chinese),
+                                          title: { language in
+                        switch language {
+                        case .system: return "跟随系统"
+                        case .chinese: return "简体中文"
+                        case .english: return "English"
+                        }
+                    })
                     .frame(width: SettingsMetrics.controlWidth)
                 }
                 PanelDivider()

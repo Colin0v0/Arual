@@ -24,6 +24,9 @@ enum PanelStyle {
     static let controlHover = adaptive(light: controlHoverLight, dark: controlHoverDark)
     // 选中的页签是白色卡片；与设备图标的浅灰底、列表的平铺背景分开定义。
     static let tabSelection = adaptive(light: .white, dark: NSColor(red: 0.23, green: 0.23, blue: 0.24, alpha: 1))
+    /// 分段控件使用中性浅灰轨道，选中项仍是白色胶囊，不借用系统蓝色的强调色。
+    static let segmentTrack = adaptive(light: NSColor(red: 0.94, green: 0.94, blue: 0.95, alpha: 1),
+                                       dark: NSColor(red: 0.20, green: 0.20, blue: 0.21, alpha: 1))
     static let iconSurface = adaptive(light: NSColor(white: 1, alpha: 0.72),
                                       dark: NSColor(red: 0.27, green: 0.27, blue: 0.29, alpha: 1))
     static let prominentFill = adaptive(light: NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
@@ -137,6 +140,104 @@ struct PanelButtonStyle: ButtonStyle {
                 .animation(PanelStyle.animation(reduceMotion: reduceMotion), value: configuration.isPressed)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hover.active)
         }
+    }
+}
+
+/// 设置页和布尔选项共用的分段控件；未选中文字保持浅灰，悬停才提升到正文色。
+struct PanelSegmentedControl<Selection: Hashable>: View {
+    let items: [Selection]
+    @Binding var selection: Selection
+    let title: (Selection) -> String
+    @Namespace private var selectionNamespace
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.self) { item in
+                Button {
+                    selection = item
+                } label: {
+                    Text(title(item))
+                        .font(PanelStyle.bodyFont)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 27)
+                        .contentShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(PanelSegmentButtonStyle(selected: selection == item,
+                                                     namespace: selectionNamespace))
+                .accessibilityAddTraits(selection == item ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(PanelStyle.segmentTrack, in: RoundedRectangle(cornerRadius: 9))
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.leftArrow) { moveSelection(by: -1) }
+        .onKeyPress(.rightArrow) { moveSelection(by: 1) }
+    }
+
+    /// 分段控件只保留一个键盘焦点，方向键在选项之间移动，避免焦点停在已隐藏的胶囊里。
+    private func moveSelection(by offset: Int) -> KeyPress.Result {
+        guard let index = items.firstIndex(of: selection) else { return .ignored }
+        let target = min(items.count - 1, max(0, index + offset))
+        guard target != index else { return .handled }
+        selection = items[target]
+        return .handled
+    }
+}
+
+/// 选中块使用独立白色胶囊；未选中项不再沿用系统分段控件的深色文字。
+private struct PanelSegmentButtonStyle: ButtonStyle {
+    let selected: Bool
+    let namespace: Namespace.ID
+
+    func makeBody(configuration: Configuration) -> some View {
+        SegmentBody(configuration: configuration, selected: selected, namespace: namespace)
+    }
+
+    private struct SegmentBody: View {
+        let configuration: ButtonStyle.Configuration
+        let selected: Bool
+        let namespace: Namespace.ID
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @StateObject private var hover = HoverState()
+
+        private final class HoverState: ObservableObject {
+            @Published var active = false
+        }
+
+        var body: some View {
+            configuration.label
+                // 悬停只改变文字对比度，不额外铺蓝色；选中项始终保持正文黑。
+                .foregroundStyle(selected || (isEnabled && (hover.active || configuration.isPressed))
+                                 ? PanelStyle.ink : PanelStyle.secondary)
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(PanelStyle.tabSelection)
+                            .shadow(color: PanelStyle.ink.opacity(0.08), radius: 1, y: 1)
+                            .matchedGeometryEffect(id: "segment-selection", in: namespace)
+                    }
+                }
+                .opacity(isEnabled ? 1 : 0.4)
+                .onHover { hover.active = $0 }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hover.active)
+        }
+    }
+}
+
+/// 所有是/否设置统一使用关闭与开启两格，不使用系统蓝色开关。
+struct PanelBooleanControl: View {
+    @Binding var isOn: Bool
+    @Environment(\.appLanguage) private var language
+
+    var body: some View {
+        PanelSegmentedControl(items: [false, true], selection: $isOn,
+                              title: { value in
+            L10n.text(value ? "开启" : "关闭", language: language)
+        })
     }
 }
 

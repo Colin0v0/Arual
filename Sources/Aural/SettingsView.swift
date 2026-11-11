@@ -62,24 +62,14 @@ struct SettingsView: View {
     private var generalCard: some View {
         SettingsCard(title: settings.localized("通用")) {
             SettingsRow(title: settings.localized("界面语言")) {
-                Picker("", selection: $settings.language) {
-                    ForEach(AppLanguage.allCases) { language in
-                        Text(languageTitle(language)).tag(language)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+                PanelSegmentedControl(items: AppLanguage.allCases, selection: $settings.language,
+                                      title: languageTitle)
                 .frame(width: SettingsMetrics.controlWidth)
             }
             PanelDivider()
             SettingsRow(title: settings.localized("外观")) {
-                Picker("", selection: $settings.appearance) {
-                    ForEach(AppAppearance.allCases) { appearance in
-                        Text(appearanceTitle(appearance)).tag(appearance)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+                PanelSegmentedControl(items: AppAppearance.allCases, selection: $settings.appearance,
+                                      title: appearanceTitle)
                 .frame(width: SettingsMetrics.controlWidth)
             }
             PanelDivider()
@@ -203,6 +193,7 @@ enum SettingsMetrics {
     static let width: CGFloat = 500
     static let height: CGFloat = 470
     static let controlWidth: CGFloat = 238
+    static let booleanControlWidth: CGFloat = 116
     static let rowHeight: CGFloat = 40
     static var size: CGSize { CGSize(width: width, height: height) }
 }
@@ -221,11 +212,7 @@ struct SettingsCard<Content: View>: View {
                 content()
             }
             .padding(.horizontal, 12)
-            .background(PanelStyle.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(PanelStyle.line.opacity(0.75), lineWidth: 1)
-            }
+            // 设置行直接落在画布上，不再包一层厚重灰色卡片。
         }
     }
 }
@@ -280,10 +267,9 @@ struct SettingsToggleRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            Toggle("", isOn: $isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
+            PanelBooleanControl(isOn: $isOn)
+                .frame(width: SettingsMetrics.booleanControlWidth)
+                .accessibilityLabel(title)
         }
         // 与普通设置行共用左侧留白，悬停底板与说明文字保持稳定距离。
         .padding(.horizontal, 8)

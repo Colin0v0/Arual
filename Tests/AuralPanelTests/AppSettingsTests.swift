@@ -64,6 +64,8 @@ struct AppSettingsTests {
         #expect(L10n.text("显示当前设备剩余电量", language: .english) == "Show Current Device Battery")
         #expect(L10n.text("检查更新…", language: .english) == "Check for Updates…")
         #expect(L10n.text("未发现新版本", language: .english) == "No Updates Available")
+        #expect(L10n.text("开启", language: .english) == "On")
+        #expect(L10n.text("关闭", language: .english) == "Off")
         #expect(L10n.text("检查失败，重试", language: .english) == "Check Failed, Retry")
         #expect(L10n.format("发现新版本 %@", language: .english, arguments: ["0.1.11"])
                 == "Version 0.1.11 is available")
@@ -76,6 +78,33 @@ struct AppSettingsTests {
         let size = SettingsMetrics.size
         #expect(size.width == 500)
         #expect(size.height == 470)
+    }
+
+    @Test @MainActor func segmentedAndBooleanControlsKeepNeutralUnselectedText() throws {
+        let renderer = ImageRenderer(content:
+            VStack(spacing: 8) {
+                PanelSegmentedControl(items: AppAppearance.allCases,
+                                      selection: .constant(AppAppearance.system),
+                                      title: { appearance in
+                    switch appearance {
+                    case .system: return "跟随系统"
+                    case .light: return "浅色"
+                    case .dark: return "深色"
+                    }
+                })
+                PanelBooleanControl(isOn: .constant(false))
+            }
+            .padding(8)
+            .frame(width: SettingsMetrics.controlWidth)
+            .background(PanelStyle.canvas)
+            .preferredColorScheme(.light)
+        )
+        let image = try #require(renderer.nsImage)
+        let bitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/aural-settings-controls.png"))
+        #expect(image.size.width == SettingsMetrics.controlWidth)
+        #expect(SettingsMetrics.booleanControlWidth == 116)
     }
 
     @Test func settingsViewRendersAtFixedSizeInBothAppearances() throws {

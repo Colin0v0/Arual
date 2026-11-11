@@ -303,6 +303,7 @@ enum L10n {
         "正在断开控制通道…": "Disconnecting the control channel…",
         "控制连接失败": "Control connection failed",
         "关闭": "Off",
+        "开启": "On",
         "降噪": "Noise Cancellation",
         "透传": "Transparency",
         "抗风噪": "Wind Reduction",
