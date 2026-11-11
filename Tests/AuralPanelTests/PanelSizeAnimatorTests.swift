@@ -10,7 +10,7 @@ struct PanelSizeAnimatorTests {
         let window = makeWindow()
         defer { window.close() }
         let animator = PanelSizeAnimator()
-        let target = CGRect(x: 400, y: 430, width: 510, height: 334)
+        let target = CGRect(x: window.frame.minX, y: window.frame.maxY - 334, width: 510, height: 334)
         animator.resize(window: window, to: target, animated: true)
         // 与 Magpie 一样，先把目标留给宿主完成本轮布局，再在下一轮主线程启动 glide。
         #expect(window.frame.size.height == 464)
@@ -27,7 +27,7 @@ struct PanelSizeAnimatorTests {
         let window = makeWindow()
         defer { window.close() }
         let animator = PanelSizeAnimator()
-        let target = CGRect(x: 400, y: 464, width: 510, height: 300)
+        let target = CGRect(x: window.frame.minX, y: window.frame.maxY - 300, width: 510, height: 300)
         animator.resize(window: window, to: target, animated: false)
         #expect(window.frame == target)
         #expect(window.manualFrameCalls == 1)
@@ -38,13 +38,13 @@ struct PanelSizeAnimatorTests {
         defer { window.close() }
         let animator = PanelSizeAnimator()
         let top = window.frame.maxY
-        let target = CGRect(x: 400, y: top - 300, width: 510, height: 300)
+        let target = CGRect(x: window.frame.minX, y: top - 300, width: 510, height: 300)
         animator.resize(window: window, to: target, animated: true)
         var intermediateHeights: [CGFloat] = []
         for _ in 0..<30 {
             RunLoop.main.run(until: Date().addingTimeInterval(0.012))
             #expect(abs(window.frame.maxY - top) < 0.001)
-            #expect(window.frame.minX == 400)
+            #expect(window.frame.minX == target.minX)
             #expect(window.frame.width == 510)
             if window.frame.height > 300 && window.frame.height < 464 {
                 intermediateHeights.append(window.frame.height)
@@ -59,9 +59,9 @@ struct PanelSizeAnimatorTests {
         defer { window.close() }
         let animator = PanelSizeAnimator()
         let top = window.frame.maxY
-        animator.resize(window: window, to: CGRect(x: 400, y: top - 300, width: 510, height: 300), animated: true)
+        animator.resize(window: window, to: CGRect(x: window.frame.minX, y: top - 300, width: 510, height: 300), animated: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.04))
-        let target = CGRect(x: 400, y: top - 464, width: 510, height: 464)
+        let target = CGRect(x: window.frame.minX, y: top - 464, width: 510, height: 464)
         animator.resize(window: window, to: target, animated: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         #expect(window.frame == target)
@@ -73,7 +73,7 @@ struct PanelSizeAnimatorTests {
         defer { window.close() }
         let animator = PanelSizeAnimator()
         let top = window.frame.maxY
-        animator.resize(window: window, to: CGRect(x: 400, y: top - 300, width: 510, height: 300), animated: true)
+        animator.resize(window: window, to: CGRect(x: window.frame.minX, y: top - 300, width: 510, height: 300), animated: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.04))
         animator.cancel()
         let stopped = window.frame
@@ -86,10 +86,10 @@ struct PanelSizeAnimatorTests {
         defer { window.close() }
         let animator = PanelSizeAnimator()
         let top = window.frame.maxY
-        animator.resize(window: window, to: CGRect(x: 400, y: top - 300, width: 510, height: 300), animated: true)
+        animator.resize(window: window, to: CGRect(x: window.frame.minX, y: top - 300, width: 510, height: 300), animated: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.04))
         animator.cancel()
-        let reopened = CGRect(x: 600, y: 400, width: 510, height: 400)
+        let reopened = PanelTestSupport.windowFrame(size: CGSize(width: 510, height: 400))
         animator.resize(window: window, to: reopened, animated: false)
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         #expect(window.frame == reopened)
@@ -101,8 +101,8 @@ struct PanelSizeAnimatorTests {
         defer { window.close() }
         let animator = PanelSizeAnimator()
         let top = window.frame.maxY
-        let first = CGRect(x: 400, y: top - 300, width: 510, height: 300)
-        let latest = CGRect(x: 400, y: top - 334, width: 510, height: 334)
+        let first = CGRect(x: window.frame.minX, y: top - 300, width: 510, height: 300)
+        let latest = CGRect(x: window.frame.minX, y: top - 334, width: 510, height: 334)
         animator.resize(window: window, to: first, animated: true)
         animator.resize(window: window, to: latest, animated: true)
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
@@ -117,7 +117,7 @@ struct PanelSizeAnimatorTests {
         defer { window.close() }
         let animator = PanelSizeAnimator()
         let top = window.frame.maxY
-        let target = CGRect(x: 400, y: top - 300, width: PanelMetrics.width, height: 300)
+        let target = CGRect(x: window.frame.minX, y: top - 300, width: PanelMetrics.width, height: 300)
         animator.settleAfterLayout(window: window, to: target)
         #expect(window.frame.height == 464)
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
@@ -128,7 +128,7 @@ struct PanelSizeAnimatorTests {
 
     @MainActor private func makeWindow() -> NativeAnimationWindow {
         _ = NSApplication.shared
-        let window = NativeAnimationWindow(contentRect: CGRect(x: 400, y: 300, width: 510, height: 464),
+        let window = NativeAnimationWindow(contentRect: PanelTestSupport.windowFrame(size: CGSize(width: 510, height: 464)),
                                            styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSView(frame: CGRect(origin: .zero, size: window.frame.size))

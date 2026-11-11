@@ -5,6 +5,8 @@ name: Release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -12,11 +14,24 @@ permissions:
 
 # 发布必须串行执行；取消进行中的任务可能留下已创建的 tag 或半成品 Release。
 concurrency:
-  group: release-main
+  group: release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: 完整检查
+        run: ./Scripts/check-ci.sh
+      - name: 验证 DMG 与旧版更新 ZIP
+        run: ./Scripts/build-release-assets.sh
+
   detect:
+    if: github.event_name == 'push'
     runs-on: macos-15
     outputs:
       should_release: ${{ steps.detect.outputs.should_release }}
@@ -65,7 +80,7 @@ jobs:
       - name: 检出合并后的 main
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: 校验发布分支与源码版本
@@ -96,18 +111,22 @@ jobs:
       - name: 完整检查
         run: ./Scripts/check-ci.sh
 
-      - name: 构建可拖动安装的 DMG
+      - name: 构建 DMG 与旧版更新 ZIP
         id: package
         shell: bash
         env:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          ./Scripts/build-dmg.sh
+          ./Scripts/build-release-assets.sh
           DMG="dist/Aural-${VERSION}-macOS-arm64.dmg"
           test -f "$DMG"
           test -f "$DMG.sha256"
+          ZIP="dist/Aural-${VERSION}-macOS-arm64.zip"
+          test -f "$ZIP"
+          test -f "$ZIP.sha256"
           echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
 
       - name: 创建 GitHub Release
         shell: bash
@@ -116,6 +135,7 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
           TAG: ${{ needs.detect.outputs.tag }}
           DMG: ${{ steps.package.outputs.dmg }}
+          ZIP: ${{ steps.package.outputs.zip }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -133,9 +153,11 @@ jobs:
           ### 安装与更新
 
           - 适用于 macOS 15.4 或更新版本的 Apple Silicon Mac。
-          - Release 优化构建，版本 $VERSION；提供可拖入 Applications 的 DMG 和 SHA-256 校验文件。
+          - Release 优化构建，版本 $VERSION；提供可拖入 Applications 的 DMG、旧版自动更新需要的 ZIP，以及各自 SHA-256 校验文件。
           - 采用 ad-hoc 签名，未经过 Apple 公证，不等同于 Developer ID 签名。
           - 合并 release/$VERSION 后由 GitHub Actions 自动发布。
+
+          - 0.1.11 / 0.1.12 更新器仍需 ZIP 及 GitHub 资产 digest；本次同时发布兼容 ZIP。旧客户端的匿名 API 配额不会被远端发布修复，遇 403 请等待配额恢复或手动安装 DMG。
 
           ### 校验
 
@@ -154,7 +176,7 @@ jobs:
           # 先创建 tag；若远端 tag 已被他人抢先创建，这一步会失败而不是覆盖历史。
           git tag "$TAG"
           git push origin "$TAG"
-          gh release create "$TAG" "$DMG" "$DMG.sha256" \
+          gh release create "$TAG" "$DMG" "$DMG.sha256" "$ZIP" "$ZIP.sha256" \
             --title "Aural $VERSION — Development Preview" \
             --notes-file "$NOTES" \
             --prerelease \

@@ -8,12 +8,12 @@ struct PanelPageDeckTests {
         let state = DeckState()
         let host = NSHostingView(rootView: DeckFixture(state: state))
         host.frame.size = host.fittingSize
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(host.fittingSize == NSSize(width: PanelMetrics.width, height: 260))
         let originalFrame = host.frame
         for index in 0..<80 {
             state.selection = index % 2
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             // 短页和长页来回切换，不能产生短页高度、中间帧高度或宽度波动。
             #expect(host.fittingSize == NSSize(width: PanelMetrics.width, height: 260))
             #expect(host.frame == originalFrame)
@@ -25,13 +25,13 @@ struct PanelPageDeckTests {
         let host = NSHostingView(rootView: DeckFixture(state: state))
         host.frame.size = host.fittingSize
         state.longPageHeight = 330
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(host.fittingSize.height == 330)
         state.selection = 1
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(host.fittingSize.height == 330)
         state.longPageHeight = 210
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(host.fittingSize.height == 210)
     }
 
@@ -39,7 +39,7 @@ struct PanelPageDeckTests {
         let state = DeckState()
         let host = NSHostingView(rootView: ViewportFixture(state: state))
         host.frame.size = NSSize(width: PanelMetrics.width, height: 200)
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         let scrolls = findScrollViews(in: host)
         #expect(scrolls.count == 2)
         for scroll in scrolls {
@@ -54,7 +54,7 @@ struct PanelPageDeckTests {
         second.contentView.scroll(to: NSPoint(x: 0, y: 60))
         for index in 0..<30 {
             state.selection = index % 2
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             #expect(first.contentView.bounds.origin.y == 120)
             #expect(second.contentView.bounds.origin.y == 60)
             #expect(host.frame.size == NSSize(width: PanelMetrics.width, height: 200))
@@ -66,14 +66,14 @@ struct PanelPageDeckTests {
         let state = DeckState()
         let host = NSHostingView(rootView: ViewportFixture(state: state))
         host.frame.size = NSSize(width: PanelMetrics.width, height: 200)
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(state.heightSnapshots.last == [0: 450, 1: 300])
         state.secondPageHeight = 900
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(state.heightSnapshots.last == [0: 450, 1: 900])
         #expect(host.frame.height == 200)
         state.selection = 1
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         #expect(state.heightSnapshots.last == [0: 450, 1: 900])
     }
 
@@ -84,7 +84,7 @@ struct PanelPageDeckTests {
             }.frame(width: 100)
         )
         host.frame.size = host.fittingSize
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         func buttons(in view: NSView) -> [PanelActionControl] {
             if let button = view as? PanelActionControl { return [button] }
             return view.subviews.flatMap { buttons(in: $0) }
@@ -100,11 +100,11 @@ struct PanelPageDeckTests {
         let state = DeckState()
         let host = NSHostingView(rootView: ViewportFixture(state: state))
         host.frame.size = CGSize(width: PanelMetrics.width, height: state.viewportHeight)
-        host.layoutSubtreeIfNeeded()
+        PanelTestSupport.flushLayout(host)
         for height: CGFloat in [186, 220, 260, 310, 350, 310, 260, 220, 186] {
             state.viewportHeight = height
             host.frame.size = CGSize(width: PanelMetrics.width, height: height)
-            host.layoutSubtreeIfNeeded()
+            PanelTestSupport.flushLayout(host)
             let scrolls = findScrollViews(in: host)
             #expect(scrolls.count == 2)
             for scroll in scrolls {
