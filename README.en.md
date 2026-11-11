@@ -18,7 +18,7 @@
 
 Aural brings system outputs, microphones, per-app volume, and Bluetooth headphone controls into one menu bar panel. The interface is built with SwiftUI, device and application audio are managed through Core Audio, and supported headphones use their respective Bluetooth protocols or macOS system properties.
 
-> **Development preview · 0.1.11**
+> **Development preview · 0.1.12**
 >
 > The source tree is still under validation. Protocol integration does not mean every device has completed compatibility testing. When a production installer is published, refer to the release notes for that version.
 
