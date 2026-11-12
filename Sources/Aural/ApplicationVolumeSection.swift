@@ -5,6 +5,8 @@ struct ApplicationVolumeSection: View {
     @ObservedObject var model: AppModel
     /// 只有当前可见的设备分区订阅实时电平，隐藏页仍保留滚动位置但不做 30Hz 重绘。
     let metersVisible: Bool
+    /// 应用路由只在输出页、且多设备组已确认时显示，麦克风页不提供输出路由入口。
+    let routingEnabled: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appLanguage) private var language
 
@@ -12,12 +14,16 @@ struct ApplicationVolumeSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("APP").font(.system(size: 11, weight: .medium)).foregroundStyle(PanelStyle.secondary)
                 .padding(.leading, PanelMetrics.horizontalInset)
+            // 所有权限状态都由独立原生对话框处理，APP 分区不插入提示或授权按钮。
             if let reason = model.applicationAudioUnavailableReason {
                 // 系统多输出负责原始播放；不展示看似可用、实际只有单流能力的应用滑杆。
                 Text(L10n.text(reason, language: language))
                     .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary).padding(12)
             } else {
                 VStack(spacing: 0) {
+                    if let error = model.appAudioRoutePersistenceError {
+                        PanelError(text: L10n.text(error, language: language)).padding(16)
+                    }
                     if let error = model.processError {
                         PanelError(text: L10n.text(error, language: language)).padding(16)
                     }
@@ -61,13 +67,29 @@ struct ApplicationVolumeSection: View {
                             setGain: { model.setApplicationGain($0, for: app.id) },
                             retryMeter: { model.retryMeter(app.id) },
                             applyConfiguration: { model.applyApplication(app.id) },
-                            stopManaging: { model.stopManaging(app.id) })
+                            stopManaging: { model.stopManaging(app.id) },
+                            routingEnabled: routingEnabled,
+                            audioRoute: model.applicationAudioRoute(for: app.id),
+                            routeOutputs: model.availableApplicationRouteOutputs,
+                            setAudioRoute: { model.setApplicationAudioRoute($0, for: app.id) },
+                            toggleRouteOutput: { model.toggleApplicationAudioRouteDevice($0, for: app.id) })
+            // 只禁用 APP 音频处理；上方硬件音量、设备切换和麦克风控制仍可使用。
+            .disabled(!model.audioCaptureAccess.allowsApplicationAudio)
     }
 
     private func status(for app: ApplicationAudioRow, state: ApplicationMixState) -> String {
+        if !model.audioCaptureAccess.allowsApplicationAudio {
+            return L10n.text("系统音频录制尚未授权", language: language)
+        }
         if state.failure != nil { return L10n.text("未应用；请从选项中重新应用", language: language) }
         if model.processError != nil { return L10n.text("音频状态不可用", language: language) }
         if let session = model.sessions[app.id], session.isActive {
+            if model.effectiveApplicationAudioRoute(for: app.id).isCustom {
+                return L10n.text("已应用自定义路由", language: language)
+            }
+            if model.applicationAudioRoute(for: app.id).isCustom {
+                return L10n.text("自定义路由暂不可用，当前按全部输出播放", language: language)
+            }
             return L10n.text(session.mode == .mixing ? "已应用音量配置" : "正在读取实时电平",
                              language: language)
         }

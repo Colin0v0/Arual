@@ -1,11 +1,12 @@
 import AppKit
 import SwiftUI
 import Testing
+import AuralCore
 @testable import Aural
 
 @MainActor
 struct AppSettingsTests {
-    /// 全新安装不应主动显示耳机页或同时输出入口，用户需要在设置里明确开启。
+    /// 全新安装不应主动显示耳机页或多设备输出入口，用户需要在设置里明确开启。
     @Test func freshInstallKeepsOptionalFeaturesOff() throws {
         let suite = "Aural.AppSettingsDefaults.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -59,6 +60,7 @@ struct AppSettingsTests {
     @Test func englishDictionaryCoversSettingsAndDeviceCopy() {
         #expect(L10n.text("Aural 设置", language: .english) == "Aural Settings")
         #expect(L10n.text("显示多设备输出", language: .english) == "Show Multi-Device Output")
+        #expect(L10n.text("多设备输出", language: .english) == "Multi-Device Output")
         #expect(L10n.format("多设备输出 · %d 台", language: .english, arguments: [2])
                 == "Multi-Device Output · 2 Devices")
         #expect(L10n.text("显示当前设备剩余电量", language: .english) == "Show Device Battery")
@@ -72,6 +74,34 @@ struct AppSettingsTests {
         #expect(L10n.text("设备未公开可写的硬件静音控制", language: .english)
                 == "Device does not expose writable hardware mute")
         #expect(L10n.text("没有这个键", language: .chinese) == "没有这个键")
+        #expect(L10n.text("全部输出（默认）", language: .english) == "All Outputs (Default)")
+        #expect(L10n.text("已应用自定义路由", language: .english) == "Custom route applied")
+    }
+
+    @Test func appAudioRoutesPersistAcrossStoreInstances() throws {
+        let suite = "Aural.AppAudioRouteStoreTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let routes: [String: AppAudioRoute] = [
+            "bundle:test.browser": .custom(deviceUIDs: ["speaker", "headphone"])
+        ]
+        try AppAudioRouteStore(defaults: defaults).save(routes)
+        let restored = try AppAudioRouteStore(defaults: defaults).load()
+        #expect(restored == routes)
+    }
+
+    @Test func damagedAppAudioRouteDataReportsAnExplicitReadError() throws {
+        let suite = "Aural.AppAudioRouteStoreDamageTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(Data("{".utf8), forKey: "local.aural.settings.appAudioRoutes")
+        #expect(throws: AppAudioRouteStoreError.self) {
+            try AppAudioRouteStore(defaults: defaults).load()
+        }
     }
 
     @Test func settingsWindowUsesTheDeclaredFixedSize() {

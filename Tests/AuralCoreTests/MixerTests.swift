@@ -115,6 +115,31 @@ struct SessionStateTests {
         #expect(route.acceptsActiveProcessRoutes(routes))
     }
 
+    @Test func customSubsetKeepsGroupSourceAndAcceptsAllGroupProcessRoutes() throws {
+        let memberA = AudioOutput(id: 11, uid: "member.a", name: "成员 A",
+                                  transport: kAudioDeviceTransportTypeBuiltIn)
+        let memberB = AudioOutput(id: 12, uid: "member.b", name: "成员 B",
+                                  transport: kAudioDeviceTransportTypeUSB)
+        let aggregate = AudioOutput(id: 99, uid: "local.aural.multi.test", name: "Aural 多设备输出",
+                                    transport: kAudioDeviceTransportTypeAggregate)
+        let route = try ApplicationPlaybackRoute(
+            output: aggregate,
+            playbackOutputs: [memberB],
+            groupOutputs: [memberA, memberB],
+            mainOutputUID: memberA.uid
+        )
+        // 捕获仍绑定公开组主成员；重放目标可以是同一组内任意非空子集。
+        #expect(route.tapDeviceUID == memberA.uid)
+        #expect(route.playbackDeviceUIDs == [memberB.uid])
+        #expect(route.mainDeviceUID == memberB.uid)
+        #expect(!route.isStacked)
+        #expect(route.acceptsProcessRouteUIDs([aggregate.uid]))
+        #expect(route.acceptsProcessRouteUIDs([memberA.uid]))
+        #expect(route.acceptsProcessRouteUIDs([memberB.uid]))
+        #expect(route.acceptsProcessRouteUIDs([memberA.uid, memberB.uid]))
+        #expect(!route.acceptsProcessRouteUIDs(["third.party.output"]))
+    }
+
     @Test func activeProcessRequiresStableAllowedRoute() throws {
         let memberA = AudioOutput(id: 11, uid: "member.a", name: "成员 A",
                                   transport: kAudioDeviceTransportTypeBuiltIn)

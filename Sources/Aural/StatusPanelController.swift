@@ -10,6 +10,7 @@ final class StatusPanelController: NSObject {
     private let statusItem: NSStatusItem
     private let model: AppModel
     private var settingsWindow: SettingsWindow?
+    private var audioCaptureAlert: AudioCaptureAccessAlertController?
     private let popupLayout = PanelPresentationLayout()
     private let popupSizeAnimator = PanelSizeAnimator()
     private var popupTopLeft = CGPoint.zero
@@ -81,6 +82,17 @@ final class StatusPanelController: NSObject {
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateSettingsWindowTitle() }
             }
+        audioCaptureAlert = AudioCaptureAccessAlertController(
+            access: model.$audioCaptureAccess.eraseToAnyPublisher(),
+            currentAccess: { model.audioCaptureAccess },
+            language: { AppSettings.shared.resolvedLanguage },
+            beforePresenting: { [weak self] in self?.hidePopup() },
+            openSettings: model.openAudioCaptureSettings,
+            requestAccess: model.requestAudioCaptureAccess,
+            presentAlert: { alert in
+                NSApp.activate(ignoringOtherApps: true)
+                return alert.runModal()
+            })
     }
 
     /// 齿轮和右键菜单都进入同一个真实设置窗口，不再复制主面板的设备控制内容。

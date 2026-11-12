@@ -46,7 +46,7 @@ struct OutputRoutingTests {
         microphone.frame.size = microphone.fittingSize
         microphone.layoutSubtreeIfNeeded()
 
-        // 一台输出 + 同时输出入口，必须与两台麦克风行占用同样的垂直空间。
+        // 一台输出 + 多设备输出入口，必须与两台麦克风行占用同样的垂直空间。
         #expect(routing.fittingSize.height == 80)
         #expect(microphone.fittingSize.height == 80)
     }
@@ -83,7 +83,7 @@ struct OutputRoutingTests {
         host.layoutSubtreeIfNeeded()
         // 四台物理设备各有静音按钮，组合行也提供统一静音；成员选择折叠时不额外占高度。
         #expect(findButtons(host).count == 5)
-        #expect(findButtons(host).contains { $0.toolTip == "静音同时输出" })
+        #expect(findButtons(host).contains { $0.toolTip == "静音多设备输出" })
         #expect(host.frame.height <= 220)
         try export(host, to: "/tmp/aural-multi-output-active.png")
     }
@@ -152,7 +152,7 @@ struct OutputRoutingTests {
         #expect(!visible.contains { $0.uid == unsupported.uid })
         #expect(visible.count == fixture.outputs.count - 1)
 
-        // 旧组合中的成员必须保留一行，否则用户无法把它从同时输出中移除。
+        // 旧组合中的成员必须保留一行，否则用户无法把它从多设备输出中移除。
         let retained = SimultaneousOutputEditor.visibleOutputs(
             outputs: fixture.outputs,
             controls: controls,
@@ -177,7 +177,7 @@ struct OutputRoutingTests {
         let buttons = findButtons(host)
         #expect(buttons.count == fixture.outputs.count)
         #expect(!buttons.contains {
-            $0.toolTip == "同时输出设备" || $0.toolTip == "结束同时输出"
+            $0.toolTip == "多设备输出" || $0.toolTip == "结束多设备输出"
         })
         #expect(writes == 0)
         try export(host, to: "/tmp/aural-previous-output-recovery.png")
@@ -197,7 +197,7 @@ struct OutputRoutingTests {
         host.layoutSubtreeIfNeeded()
         let cleanup = try #require(findButtons(host).first { $0.toolTip == "清理残留设备" })
         #expect(!findButtons(host).contains {
-            $0.toolTip == "同时输出设备" || $0.toolTip == "结束同时输出"
+            $0.toolTip == "多设备输出" || $0.toolTip == "结束多设备输出"
         })
         cleanup.performClick(nil)
         #expect(cleanups == 1)
@@ -247,7 +247,7 @@ struct OutputRoutingTests {
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
         #expect(findButtons(host).contains { $0.toolTip == "清理残留设备" })
-        #expect(!findButtons(host).contains { $0.toolTip == "结束同时输出" })
+        #expect(!findButtons(host).contains { $0.toolTip == "结束多设备输出" })
     }
 
     private func findButtons(_ view: NSView) -> [PanelActionControl] {

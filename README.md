@@ -1,167 +1,107 @@
 <p align="center">
-  <img src="Resources/AppIcon-1024.png" width="128" height="128" alt="Aural 应用图标" />
+  <img src="Resources/AppIcon-1024.png" width="128" height="128" alt="Aural app icon" />
 </p>
 
 <h1 align="center">Aural</h1>
 
-<p align="center">原生 macOS 菜单栏音频控制工具</p>
+<p align="center"><strong>Your Mac. Your Sound. Your Rules.</strong></p>
 
 <p align="center">
-  <a href="README.en.md">English</a> · <strong>简体中文</strong>
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-15.4%2B-000000?logo=apple&logoColor=white" alt="macOS 15.4 或更新版本" />
-  <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6" />
+  <img src="https://img.shields.io/badge/macOS-15.4%2B-000000?logo=apple&logoColor=white" alt="macOS 15.4 or later" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT License" /></a>
 </p>
 
-Aural 将系统输出、麦克风、应用音量和蓝牙耳机控制整合到一个菜单栏面板中。界面使用 SwiftUI 构建，音频设备和应用音频由 Core Audio 管理，受支持耳机通过对应蓝牙协议或 macOS 系统属性控制。
+Aural keeps everyday audio controls in one small menu bar panel: switch speakers or microphones, adjust apps separately, use multiple outputs, and control compatible Bluetooth headphones.
 
-> **开发预览 · 0.1.15**
+> **Development preview · 0.2.0**
 >
-> 当前源码仍在持续验证中。协议接入不代表所有设备均已完成兼容性测试；正式安装包发布时，请以对应版本的发布说明为准。
+> Aural is still being tested across different Macs and headphones. Some features depend on the device, firmware, and macOS version you use.
 
-## 功能概览
+## What you can do
 
-| 能力 | 说明 |
+- **Switch audio devices** — choose the output or microphone you want without opening System Settings.
+- **Control volume and mute** — use the controls your connected device actually supports.
+- **Adjust apps separately** — give each playing app its own volume, mute state, and live level meter.
+- **Use multiple outputs** — play system audio through more than one speaker or headphone at the same time.
+- **Send apps to different outputs** — keep music on your headphones while browser audio stays on your speakers.
+- **Control compatible headphones** — check battery, switch noise modes, and manage several headphones in one place.
+- **Make it yours** — choose Chinese or English, follow the system appearance, and turn optional features on or off.
+
+Headphone controls and multi-device output are off by default. Turn them on in Settings when you need them.
+
+## Multiple outputs and per-app sound
+
+After you enable **Show Multi-Device Output**, choose two or more outputs from the Output page. Aural keeps them available as one group, while each device keeps its own volume and mute controls.
+
+When apps are playing, each app row can use:
+
+- **All Outputs** — follow every device in the current group. New devices are included automatically.
+- **Custom output** — send this app only to the selected devices.
+
+Changing one app's output does not affect other apps or the system-wide output. If a device disconnects temporarily, Aural remembers your choice and restores it when the device comes back.
+
+> Changing an app's output really moves its sound; it is not just a visual setting. You may hear a short gap while the change is applied.
+
+## Headphone support
+
+Available controls vary by model and firmware.
+
+| Headphones | What Aural can do |
 | --- | --- |
-| 输出设备 | 查看系统输出设备，切换默认输出，调节设备公开的硬件音量与静音 |
-| 麦克风 | 切换系统默认输入，调节设备支持的输入音量与硬件静音 |
-| 应用音量 | 分别调整正在播放的应用音量与静音，并显示实时峰值电平 |
-| 耳机控制 | 读取受支持耳机的状态，并按设备能力切换降噪、通透等聆听模式 |
-| 多设备输出 | 从统一入口选择一个或多个输出设备，分别调节成员设备音量 |
-| 更新检查 | 自动检查公开 GitHub Releases，发现新版本时在主面板显示更新入口 |
-| 偏好设置 | 中英文界面、跟随系统或手动选择外观、可选功能显示与开机启动 |
+| Bowers & Wilkins PX / PI | Battery and supported noise-control modes |
+| Sony MDR V1 | Battery and supported noise-control modes |
+| OPPO Enco | Battery and supported noise modes for identified models |
+| AirPods / Beats | Supported listening modes exposed by macOS |
 
-耳机控制页、多设备输出入口和开机启动默认关闭，可在设置中按需开启。
+Upstream testing includes Px7 S3, original Px8, Sony WH-1000XM3, and OPPO Enco Air5s. This does not mean every model in the same family is supported.
 
-## 系统音频
+## Install
 
-输出页和麦克风页分别管理默认输出与输入。音量和静音能力直接读取自硬件；设备未公开可写属性时，对应的调节控件不可用，不会填入推测值。
+1. Download the latest build from [GitHub Releases](https://github.com/Colin0v0/Aural/releases).
+2. Open the DMG and drag Aural into Applications.
+3. Launch Aural and allow the requested Bluetooth or system-audio permissions if you want to use those features.
 
-- 点击设备名称切换系统路由。
-- 拖动音量滑杆只调节该设备，不改变其他输出。
-- 使用独立设备路由的应用可能不会跟随系统默认输出。
-- 麦克风页仅管理系统输入设备，不采集或录制麦克风音频。
+Aural currently targets **macOS 15.4 or later on Apple Silicon**.
 
-## 应用独立音量
+## Privacy
 
-Aural 根据 Core Audio 的播放活动显示应用，并将能够确认归属的辅助进程合并到所属应用。暂停后应用行隐藏，本次运行期间的音量与静音配置仍会保留。
+Aural processes audio locally. It does not save recordings, upload your audio, require an account, or collect telemetry.
 
-- **音量范围：** 0–100%。100% 表示不衰减，不是读取应用内部音量，也不提供音量增强。
-- **实时电平：** 显示峰值而非扬声器声压。已管理应用的电平反映 Aural 增益和静音处理后的信号。
-- **切换设备：** APP 行的位置、音量与静音设置保持稳定；切换期间及确认后三秒内，短暂停流不会移除行。电平仍按真实信号更新，不冻结旧读数。窗口结束后仍未恢复播放的应用正常隐藏。
-- **状态变化：** 输出切换、休眠或处理错误可能暂停管理，需要明确重新应用。
-- **格式要求：** 当前处理路径要求兼容的 Float32 双声道格式，不承诺支持 DRM 等受保护音频。
+Diagnostics may include device names, IDs, or Bluetooth addresses. Remove anything private before sharing diagnostic output.
 
-如其他工具也在接管同一应用的应用音频，请避免同时启用，以免产生重复处理或设备冲突。
+## Things to know
 
-## 耳机兼容性
+- Some headphones expose only part of their controls, and compatibility can change with firmware or macOS updates.
+- Output switching is not always completely seamless.
+- Multiple Bluetooth headphones may have different latency and may not stay perfectly synchronized.
+- Sleep, device disconnects, or audio errors can require an app to be applied again.
+- Protected audio and some app-specific audio setups may not be supported.
+- Sending apps to different outputs is still being tested with real speakers and headphones.
 
-下表描述当前协议接入范围，而不是完整的型号认证列表。实际可用功能取决于耳机型号、固件、macOS 版本和设备公开的能力。
+## For developers
 
-| 系列或协议 | 状态读取 | 聆听模式控制 | 支持边界 |
-| --- | --- | --- | --- |
-| Bowers & Wilkins PX / PI 家族 | 电量、模式 | 已识别型号的降噪 / 环境音 | 通过 BLE RPC 控制并核对硬件身份；未知模式映射不写入 |
-| Sony MDR V1 | 电量、模式 | 按协议能力提供降噪 / 环境音 | 仅接入 V1，不支持 Sony V2 / Link2 |
-| OPPO Enco | 电量、模式 | 已识别产品的噪声模式 | 未知产品 ID 不启用降噪写入 |
-| AirPods / Beats | 系统公开的聆听状态 | 降噪 / 通透 / 自适应等可用模式 | 通过 BTAudio HAL 控制；不统一承诺电量或全部模式可用 |
-
-HeadBridge 上游记录过 **Px7 S3、原代 Px8、Sony WH-1000XM3、OPPO Enco Air5s** 的验证。这些记录不等同于 Aural 的本地实测结果，也不代表同系列全部型号均兼容。
-
-耳机控制只绑定已确认输出路由中的真实耳机。多设备组合中的可控耳机会自动上下排列，每副耳机拥有独立的连接、电量、噪声模式和操作状态，不需要选择控制对象，也不会改变音频输出。“停止控制”只暂停对应耳机的 Aural 控制，不影响另一副耳机或蓝牙音频，也不会在下一次轮询时自动重新启用。菜单栏只有一个电量位置，因此仅在唯一可控耳机时显示；多副耳机的电量分别显示在各自卡片中。
-
-Apple 耳机公开并启用 HAL 入耳检测时，Aural 读取真实佩戴状态；两只都摘下或放入盒中时不发送模式写入。属性未公开、检测关闭或返回未知值时不猜测佩戴状态。模式写入被 HAL 拒绝后，仅重新读取实际模式，不自动重发，也不把仍可读取的控制连接当成断线。
-
-Apple 与 B&W 等厂商共用目标选择、取消旧请求和写后回读规则，但各自使用原生 HAL 或厂商协议，仅显示设备实际确认的能力。Aural 不提供固件更新、恢复出厂或未经确认的模式写入。
-
-## 多设备输出
-
-开启设置中的“显示多设备输出”后，输出页底部会出现统一入口。展开即可选择设备并调整成员音量。
-
-- **勾选即请求应用：** 不需要额外点击“开始播放”，至少保留一台输出设备；系统确认后才显示为已启用。
-- **单设备模式：** 只选择一台设备时直接使用对应真实硬件，不创建单成员聚合设备。
-- **多设备模式：** 选择两台或更多设备时，通过 Core Audio 创建名为“Aural 多设备输出”的聚合渠道。
-- **音量控制：** 组合中的成员设备分别保留各自的音量与静音控制。
-- **APP 独立控制：** 多设备输出时，每个 APP 仍可单独调整增益并查看实时电平。
-- **展开与折叠：** 只改变列表显示，不停止播放；仅保留一台设备时仍可保持多设备模式。
-- **状态与恢复：** 切换失败时显示实际输出及待释放资源，不把旧勾选当作已经恢复。默认输出被外部设备短暂改写时，Aural 先读取正在播放进程和自身活动会话的真实设备：声音仍在原路由就恢复默认输出，不拆会话；声音确实离开才跟随实际媒体输出，并把提示音迁移到同一真实设备、释放旧组合。你在控制中心或声音设置里主动选择输出时，Aural 会按你的选择迁移。若同一设备在 30 秒内反复抢占默认输出，Aural 停止来回争抢并跟随真实输出，同时提示关闭 AirPods 的自动切换，避免反复断音。设备重连更换 HAL 句柄时按 UID 续接同一台硬件。
-- **退出组合：** 点击普通输出设备即可结束组合，切换为单设备播放。
-- **成员暂时离线：** 通道离线、从 HAL 枚举消失、聚合活动成员缺失或入耳检测明确报告未佩戴时，其余已勾选设备继续播放；仅剩一台时直接使用该台。原勾选保留，有恢复证据且经过至少两次相隔半秒的可用观察后，按 UID 自动加入；取消勾选后不再自动加入。仅当全部已选设备不可用时才等待，不自动切到未选择的设备。重配路由可能产生短暂音频间隙。
-
-蓝牙与扬声器之间可能存在固定延迟差，两副蓝牙耳机同时稳定播放也不作保证。设备断开、采样率或时钟配置变化可能导致组合不可用。
-
-> **验证提示：** 已在 Podssss、Colin Px7 S3 与内置扬声器的三设备实机上确认：取消 Podssss 后，新组合只包含剩余两路，旧组合也会被释放。播放中的最终听音仍建议人工复核。
-
-## 设置
-
-| 设置项 | 选项或行为 |
-| --- | --- |
-| 界面语言 | 跟随系统、简体中文、English |
-| 外观 | 跟随系统、浅色、深色 |
-| 显示耳机控制页 | 控制耳机功能入口是否出现在主面板，默认关闭 |
-| 显示多设备输出 | 控制多设备输出入口是否出现在输出页，默认关闭 |
-| 开机启动 | 通过 macOS 登录项服务管理，默认关闭 |
-
-点击面板齿轮可直接打开设置。左键点击菜单栏图标切换面板显示；右键菜单提供打开面板、设置和退出。
-
-## 系统要求
-
-- macOS **15.4 或更新版本**。
-- 当前本地构建为 **Apple Silicon（arm64）**；Intel 平台尚未验收。
-- 源码构建需要 Swift 6 工具链，项目使用 Swift 5 语言模式，无外部 Swift 包依赖。
-
-## 构建与验证
-
-以下命令用于本地开发和验证：
+Requirements: Swift 6 toolchain and macOS 15.4 or later.
 
 ```sh
 ./Scripts/check.sh
 open dist/Aural.app
 ```
 
-检查脚本会执行单元测试、构建应用、验证本地签名并运行只读设备诊断，最终生成 `dist/Aural.app`。当前脚本使用 ad-hoc 本地签名，不等同于 Developer ID 签名与 Apple 公证。
+The script runs tests, builds the app, verifies the local signature, and creates `dist/Aural.app`.
 
-## 权限与隐私
+Source layout:
 
-| 权限 | 用途 |
-| --- | --- |
-| 蓝牙 | 发现并控制受支持的蓝牙耳机 |
-| 系统音频访问 | 应用独立音量处理与实时电平计量 |
+- `Sources/Aural` — menu bar UI, settings, and interaction state
+- `Sources/AuralCore` — audio devices, app audio processing, meters, and headphone controls
+- `Tests` — panel and core test suites
+- `ThirdParty` — third-party source notices
 
-首次启动会触发相关权限申请。拒绝授权可能使对应功能不可用；执行申请不代表已经获得授权。
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party credits and [docs/CHANGELOG.md](docs/CHANGELOG.md) for release history.
 
-音频仅在本机实时处理，不保存录音、不上传音频。Aural 无账号、遥测或静默自动更新器；检查更新时请求 GitHub Releases 的公开版本元数据，用户确认后才下载安装包，校验 SHA-256、版本和本地签名，再在用户确认重启后由独立 helper 替换应用。诊断信息可能包含设备 UID、蓝牙地址和应用信息，分享前请自行脱敏。
+## License
 
-## 已知限制
-
-- 耳机协议接入不等于所有型号均已完成实机验证。
-- AirPods 聆听模式仍可能被 macOS 拒绝写入；本版未彻底解决该兼容性问题。
-- 设备切换尚非无缝，可能短暂停顿；同时出现的网络卡顿尚未定位。
-- 多设备输出不保证跨设备无延迟差，也不保证两副蓝牙耳机能够长期同步播放。
-- 输出切换、休眠或处理错误可能中断应用音频管理，需要用户重新应用。
-- 没有公开可写硬件音量的设备不提供模拟音量控制。
-- 应用音频处理不承诺覆盖所有音频格式或受保护内容。
-- AirPods 取消勾选后的聚合成员移除已通过实机确认，但播放中的最终听音仍建议人工复核。
-
-## 技术结构
-
-| 模块 | 职责 |
-| --- | --- |
-| `Sources/Aural` | SwiftUI 菜单栏界面、设置窗口、面板状态与交互协调 |
-| `Sources/AuralCore` | Core Audio 设备访问、应用音频处理、电平和耳机控制 |
-| `Tests/AuralPanelTests` | 面板布局、交互状态和设置测试 |
-| `Tests/AuralCoreTests` | 音频生命周期、协议、设备状态和控制逻辑测试 |
-| `ThirdParty` | 第三方代码来源与许可证原文 |
-
-## 致谢
-
-- [HeadBridge](https://github.com/herenickname/HeadBridge)：耳机协议研究，以及 B&W、Sony、OPPO 协议代码的上游来源。
-- [pods-control](https://github.com/raulgg/pods-control)：AirPods / Beats BTAudio HAL 聆听模式控制的公开实现参考。
-
-具体复用范围、修改内容和许可条款见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。这些致谢不代表上游项目对 Aural 的认可或兼容性保证。
-
-## 许可证
-
-Aural 采用 [MIT 许可证](LICENSE)。第三方代码保留各自的版权与许可声明；应用构建会附带相应许可文件。
+Aural is released under the [MIT License](LICENSE).

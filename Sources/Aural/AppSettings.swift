@@ -81,7 +81,7 @@ final class AppSettings: ObservableObject {
         self.defaults = defaults
         language = AppLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .system
         appearance = AppAppearance(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .system
-        // 耳机控制、同时输出与菜单栏电量都是可选能力，首次启动默认关闭。
+        // 耳机控制、多设备输出与菜单栏电量都是可选能力，首次启动默认关闭。
         showHeadphoneControls = defaults.object(forKey: Key.headphones) as? Bool ?? false
         showSimultaneousOutput = defaults.object(forKey: Key.simultaneousOutput) as? Bool ?? false
         showCurrentDeviceBattery = defaults.object(forKey: Key.currentDeviceBattery) as? Bool ?? false
@@ -177,7 +177,6 @@ enum L10n {
         "耳机控制": "Headphones",
         "显示耳机控制页": "Show Headphone Controls",
         "关闭后，耳机控制从主面板隐藏。": "Show the Headphones tab.",
-        "同时输出": "Simultaneous Output",
         "显示多设备输出": "Show Multi-Device Output",
         "关闭后，多设备输出功能从输出面板隐藏。":
             "Show multi-device output options.",
@@ -218,6 +217,23 @@ enum L10n {
         "检查 GitHub 上的 Aural 更新": "Check GitHub for Aural updates",
         "更新到 %@": "Update to %@",
         "音频录制权限…": "Audio Recording Permission…",
+        "未允许系统音频录制，App 音量、电平和路由暂不可用":
+            "System audio recording is not allowed. App volume, levels, and routing are unavailable.",
+        "请允许系统音频录制，以使用 App 音量、电平和路由":
+            "Allow system audio recording to use app volume, levels, and routing.",
+        "无法检查系统音频录制权限，App 音频控制已暂停":
+            "Cannot check system audio recording permission. App audio controls are paused.",
+        "已允许系统音频录制": "System audio recording is allowed",
+        "系统音频录制尚未授权": "System audio recording is not authorized",
+        "允许访问": "Allow Access",
+        "打开系统设置": "Open System Settings",
+        "需要系统音频录制权限": "System Audio Recording Permission Required",
+        "请在系统设置中允许 Aural 录制系统音频，以使用应用音量、电平和音频路由。授权后若系统要求重新打开 Aural，请按系统提示操作。":
+            "Allow Aural to record system audio in System Settings to use app volume, levels, and audio routing. If macOS asks you to reopen Aural after granting access, follow its instructions.",
+        "重新检查": "Check Again",
+        "无法检查系统音频录制权限": "Cannot Check System Audio Recording Permission",
+        "App 音频控制已暂停，请检查系统权限后重新打开 Aural。":
+            "App audio controls are paused. Check system permissions, then reopen Aural.",
         "未能打开系统设置，请手动进入隐私与安全性 → 屏幕与系统音频录制。":
             "Could not open System Settings. Open Privacy & Security → Screen & System Audio Recording manually.",
         "复制耳机诊断": "Copy Headphone Diagnostics",
@@ -240,12 +256,11 @@ enum L10n {
         "等待音频流注册后应用": "Apply after the audio stream is registered",
         "尚未读取": "Not read yet",
         "低于负 60 dBFS": "Below -60 dBFS",
-        "同时输出设备": "Simultaneous Output",
-        "同时输出 · %d 台": "Simultaneous Output · %d Devices",
+        "多设备输出": "Multi-Device Output",
         "多设备输出 · %d 台": "Multi-Device Output · %d Devices",
-        "同时输出待释放": "Simultaneous Output Pending Release",
+        "多设备输出待释放": "Multi-Device Output Pending Release",
         "清理残留设备": "Clean Up Leftover Device",
-        "关闭同时输出提示": "Dismiss Simultaneous Output Message",
+        "关闭多设备输出提示": "Dismiss Multi-Device Output Message",
         "不支持系统音量": "System volume unavailable",
         "不支持输入音量": "Input volume unavailable",
         "不支持统一音量": "Shared volume unavailable",
@@ -265,7 +280,7 @@ enum L10n {
         "设为默认输入：%@": "Set as default input: %@",
         "切换为默认输出 · %@": "Switch to default output · %@",
         "切换为默认输入 · %@": "Switch to default input · %@",
-        "结束同时输出，仅使用“%@”播放": "End simultaneous output and play only on “%@”",
+        "结束多设备输出，仅使用“%@”播放": "End multi-device output and play only on “%@”",
         "%@ 静音": "Mute %@",
         "取消静音 %@": "Unmute %@",
         "静音 %@": "Mute %@",
@@ -319,24 +334,42 @@ enum L10n {
         "耳机电量：未读取": "Headphone battery: not read",
         "耳机电量：读数无效": "Headphone battery: invalid reading",
         "耳机电量：%d%%": "Headphone battery: %d%%",
-        "从同时输出移除：%@": "Remove from simultaneous output: %@",
-        "加入同时输出：%@": "Add to simultaneous output: %@",
-        "从同时输出移除“%@”": "Remove “%@” from simultaneous output",
-        "将“%@”加入同时输出": "Add “%@” to simultaneous output",
+        "从多设备输出移除：%@": "Remove from multi-device output: %@",
+        "加入多设备输出：%@": "Add to multi-device output: %@",
+        "从多设备输出移除“%@”": "Remove “%@” from multi-device output",
+        "将“%@”加入多设备输出": "Add “%@” to multi-device output",
         "切换“%@”静音": "Toggle mute for “%@”",
-        "%@ 的同时输出音量": "Simultaneous output volume for %@",
+        "%@ 的多设备输出音量": "Multi-device output volume for %@",
         "调节“%@”独立音量；不会切换默认输出":
             "Adjust independent “%@” volume; does not change the default output",
-        "收起同时输出设备": "Collapse simultaneous output devices",
-        "展开并更改同时输出设备": "Expand and change simultaneous output devices",
-        "取消同时输出静音": "Unmute simultaneous output",
-        "静音同时输出": "Mute simultaneous output",
-        "同时输出总音量": "Simultaneous output master volume",
+        "收起多设备输出": "Collapse multi-device output",
+        "展开并更改多设备输出": "Expand and change multi-device output",
+        "取消多设备输出静音": "Unmute multi-device output",
+        "静音多设备输出": "Mute multi-device output",
+        "多设备输出总音量": "Multi-device output master volume",
         "选择一台扬声器继续播放": "Choose a speaker to continue playback",
-        "上次的同时输出还在，清理后可重新设置":
-            "Previous simultaneous output is still present; clean it up before setting up again",
+        "上次的多设备输出还在，清理后可重新设置":
+            "Previous multi-device output is still present; clean it up before setting up again",
         "选择上面的扬声器后，可调节 APP 音量与电平": "Select a speaker above to adjust app volume and levels",
-        "当前系统输出不支持 APP 独立音量与电平": "The current system output does not support per-app volume and levels"
+        "当前系统输出不支持 APP 独立音量与电平": "The current system output does not support per-app volume and levels",
+        "全部输出": "All Outputs",
+        "全部输出（默认）": "All Outputs (Default)",
+        "全部输出：自动包含新增设备": "All Outputs: new group devices are included automatically",
+        "自定义输出：%@": "Custom output: %@",
+        "至少选择一台输出设备": "Select at least one output device",
+        "应用路由仅在多设备输出模式下可用":
+            "App routing is available only in multi-device output mode",
+        "应用路由目标必须来自当前多设备输出组":
+            "App routing targets must belong to the current multi-device group",
+        "该应用没有稳定身份，不能设置持久应用路由":
+            "This app has no stable identity, so its route cannot be saved",
+        "自定义路由暂不可用，当前按全部输出播放":
+            "The custom route is temporarily unavailable. Playing through all available outputs.",
+        "已应用自定义路由": "Custom route applied",
+        "应用路由配置无法读取，请检查本地设置":
+            "Could not read the app routing configuration. Check the local settings.",
+        "应用路由配置无法保存，请检查本地设置":
+            "Could not save the app routing configuration. Check the local settings."
     ]
 }
 

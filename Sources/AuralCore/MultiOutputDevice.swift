@@ -20,7 +20,7 @@ public struct MultiOutputPlan {
             throw AudioFailure("请至少选择一台输出设备")
         }
         guard outputs.allSatisfy(\.supportsSimultaneousOutput) else {
-            throw AudioFailure("同时输出仅支持真实硬件设备，请勿选择聚合或虚拟设备")
+            throw AudioFailure("多设备输出仅支持真实硬件设备，请勿选择聚合或虚拟设备")
         }
         guard let main = preferredMainOutput(in: outputs),
               let mainRate = sampleRates[main.uid], mainRate.isFinite, mainRate > 0,
@@ -100,13 +100,13 @@ public struct MultiOutputConfiguration {
         let expected = Set(outputs.map(\.uid))
         guard let expectedMain = preferredMainOutput(in: outputs)?.uid,
               mirrorsOutputs, mainOutputUID == expectedMain else {
-            throw AudioFailure("系统未确认镜像输出或时钟配置，请重新启动同时输出")
+            throw AudioFailure("系统未确认镜像输出或时钟配置，请重新启动多设备输出")
         }
         guard outputUIDs.count == outputs.count, Set(outputUIDs) == expected else {
             throw AudioFailure("系统多输出未启用全部所选设备，请重新连接后再试")
         }
         guard driftCompensatedUIDs == Set(outputs.filter { $0.uid != expectedMain }.map(\.uid)) else {
-            throw AudioFailure("系统未启用从设备的时钟漂移补偿，请重新启动同时输出")
+            throw AudioFailure("系统未启用从设备的时钟漂移补偿，请重新启动多设备输出")
         }
         let active = Set(activeOutputUIDs)
         guard active.count == activeOutputUIDs.count, active.isSubset(of: expected) else {
@@ -180,7 +180,7 @@ public struct MultiOutputHardware {
             let interval = AudioSwitchTrace.begin("CreateAggregate")
             defer { AudioSwitchTrace.end("CreateAggregate", interval) }
             var id: AudioDeviceID = 0
-            try HAL.check(AudioHardwareCreateAggregateDevice(description as CFDictionary, &id), "创建同时输出设备")
+            try HAL.check(AudioHardwareCreateAggregateDevice(description as CFDictionary, &id), "创建多设备输出")
             return id
         }, select: { deviceID in
             let interval = AudioSwitchTrace.begin("SetDefaultOutput")
@@ -189,7 +189,7 @@ public struct MultiOutputHardware {
         }, destroy: { deviceID in
             let interval = AudioSwitchTrace.begin("DestroyAggregate")
             defer { AudioSwitchTrace.end("DestroyAggregate", interval) }
-            try HAL.check(AudioHardwareDestroyAggregateDevice(deviceID), "释放同时输出设备")
+            try HAL.check(AudioHardwareDestroyAggregateDevice(deviceID), "释放多设备输出")
         })
     }
 }
@@ -207,7 +207,7 @@ func readActiveOutputUIDs(readActiveIDs: () throws -> [AudioObjectID],
             if attempt == 1 { throw error }
         }
     }
-    throw AudioFailure("无法读取同时输出的活动成员")
+    throw AudioFailure("无法读取多设备输出的活动成员")
 }
 
 /// 只拥有聚合资源，不决定系统默认输出；选择、确认、外部变化都由唯一协调器管理。
@@ -343,7 +343,7 @@ public final class MultiOutputDevice {
             let rate = try hardware.sampleRate(member.id)
             guard rate.isFinite, rate > 0,
                   member.uid != route.mainOutputUID || rate == route.sampleRate else {
-                throw AudioFailure("同时输出成员的时钟无效，请重新配置")
+                throw AudioFailure("多设备输出成员的时钟无效，请重新配置")
             }
         }
         try hardware.configuration(route.deviceID).validate(outputs: route.outputs)

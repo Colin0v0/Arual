@@ -42,6 +42,8 @@ public struct ApplicationPlaybackRoute: Equatable, Sendable {
     public let playbackDeviceUIDs: [String]
     public let mainDeviceUID: String
     public let isStacked: Bool
+    /// 进程仍可能报告聚合内其他成员，即使本次只重放到其中一个子集。
+    public let acceptedProcessRouteUIDs: Set<String>
 
     /// 单设备不经过聚合镜像，直接捕获并重放到同一台真实硬件。
     public init(single output: AudioOutput) {
@@ -50,16 +52,21 @@ public struct ApplicationPlaybackRoute: Equatable, Sendable {
         playbackDeviceUIDs = [output.uid]
         mainDeviceUID = output.uid
         isStacked = false
+        acceptedProcessRouteUIDs = [output.uid]
     }
 
-    /// 多设备从聚合的主成员捕获，再用全部真实成员建立私有镜像输出。
+    /// 多设备从聚合的主成员捕获，再用用户选择的真实成员子集建立私有输出。
     /// Process Tap 直接绑定公开聚合设备时能启动，但回调输入会一直为空；
     /// 因此捕获源必须是真实硬件成员，公开聚合只用于确认进程当前输出路由。
-    public init(output: AudioOutput, playbackOutputs: [AudioOutput], mainOutputUID: String) throws {
+    public init(output: AudioOutput, playbackOutputs: [AudioOutput],
+                groupOutputs: [AudioOutput]? = nil,
+                mainOutputUID: String) throws {
         guard output.isAuralMultiOutput else {
             throw AudioFailure("只有 Aural 多设备输出可以使用成员镜像混音")
         }
-        guard playbackOutputs.count > 1,
+        let groupOutputs = groupOutputs ?? playbackOutputs
+        guard !playbackOutputs.isEmpty,
+              !groupOutputs.isEmpty,
               playbackOutputs.allSatisfy(\.supportsSimultaneousOutput) else {
             throw AudioFailure("多设备输出的成员不完整，无法启动 APP 独立音量")
         }
@@ -67,14 +74,20 @@ public struct ApplicationPlaybackRoute: Equatable, Sendable {
         guard Set(uids).count == uids.count else {
             throw AudioFailure("多设备输出包含重复成员，无法启动 APP 独立音量")
         }
-        guard uids.contains(mainOutputUID) else {
-            throw AudioFailure("多设备输出的主时钟设备不在成员列表中")
+        let groupUIDs = groupOutputs.map(\.uid)
+        guard Set(groupUIDs).count == groupUIDs.count,
+              Set(uids).isSubset(of: Set(groupUIDs)),
+              groupUIDs.contains(mainOutputUID) else {
+            throw AudioFailure("应用路由目标不在当前多设备输出组中")
         }
         sourceOutputUID = output.uid
         tapDeviceUID = mainOutputUID
         playbackDeviceUIDs = uids
-        mainDeviceUID = mainOutputUID
-        isStacked = true
+        // 私有输出聚合以第一个实际重放成员为主时钟；自定义子集可以不包含公开组主成员。
+        mainDeviceUID = uids.contains(mainOutputUID) ? mainOutputUID : uids[0]
+        // 单目标保持非堆叠，和多设备组内普通单设备输出语义一致。
+        isStacked = uids.count > 1
+        acceptedProcessRouteUIDs = Set(groupUIDs).union([output.uid])
     }
 
     public static func single(_ output: AudioOutput) -> Self {
@@ -85,8 +98,7 @@ public struct ApplicationPlaybackRoute: Equatable, Sendable {
     /// 也可能报告聚合中的真实成员 UID；这两类都属于当前已确认的播放路由。
     public func acceptsProcessRouteUIDs(_ routeUIDs: [String]) -> Bool {
         guard !routeUIDs.isEmpty else { return false }
-        let allowed = Set(playbackDeviceUIDs).union([sourceOutputUID])
-        return routeUIDs.allSatisfy { allowed.contains($0) }
+        return routeUIDs.allSatisfy { acceptedProcessRouteUIDs.contains($0) }
     }
 
     /// 只校验当前确实在输出的进程对象。一个 App 可能同时注册主进程、
@@ -100,7 +112,7 @@ public struct ApplicationPlaybackRoute: Equatable, Sendable {
     }
 
     public func aggregateDescription(tapUUID: UUID, aggregateUID: String) -> [String: Any] {
-        [
+        return [
             kAudioAggregateDeviceNameKey: "Aural Application Output",
             kAudioAggregateDeviceUIDKey: aggregateUID,
             kAudioAggregateDeviceIsPrivateKey: NSNumber(value: true),
@@ -189,7 +201,7 @@ public final class ProcessAudioSession: ApplicationAudioSession {
     private var started = false
     private var activityWatchdog = AudioActivityWatchdog()
     private var activeFormat: AudioStreamBasicDescription?
-    private let playbackRoute: ApplicationPlaybackRoute
+    public let playbackRoute: ApplicationPlaybackRoute
     public var isActive: Bool { started }
     public var isReleased: Bool { tapID == 0 && aggregateID == 0 && ioProc == nil }
 
@@ -219,15 +231,22 @@ public final class ProcessAudioSession: ApplicationAudioSession {
             throw AudioFailure("第三方聚合输出暂不支持 APP 独立音量或实时电平")
         }
         if output.isAuralMultiOutput {
-            guard playbackRoute.isStacked,
-                  playbackRoute.playbackDeviceUIDs.count > 1,
-                  playbackRoute.tapDeviceUID == playbackRoute.mainDeviceUID else {
+            let targets = playbackRoute.playbackDeviceUIDs
+            guard playbackRoute.sourceOutputUID == output.uid,
+                  !targets.isEmpty,
+                  Set(targets).count == targets.count,
+                  targets.contains(playbackRoute.mainDeviceUID),
+                  playbackRoute.isStacked == (targets.count > 1),
+                  playbackRoute.tapDeviceUID != output.uid,
+                  playbackRoute.acceptedProcessRouteUIDs.contains(output.uid),
+                  targets.allSatisfy({ playbackRoute.acceptedProcessRouteUIDs.contains($0) }) else {
                 throw AudioFailure("多设备输出缺少真实成员，无法启动 APP 独立音量")
             }
         } else {
             guard playbackRoute.tapDeviceUID == output.uid,
                   playbackRoute.playbackDeviceUIDs == [output.uid],
-                  !playbackRoute.isStacked else {
+                  !playbackRoute.isStacked,
+                  playbackRoute.acceptedProcessRouteUIDs == [output.uid] else {
                 throw AudioFailure("单设备输出的 APP 音频路由无效")
             }
         }
@@ -333,7 +352,8 @@ public final class ProcessAudioSession: ApplicationAudioSession {
     public func checkHealth(expectingAudio: Bool = true) throws {
         guard started else { throw AudioFailure("音频接管未成功启动，正在重试释放残留资源") }
         try validateRoutes()
-        let actual: AudioStreamBasicDescription = try HAL.read(output.id,
+        // 自定义子集的主时钟可能不是公开聚合主成员，必须读取本会话实际创建的重放聚合格式。
+        let actual: AudioStreamBasicDescription = try HAL.read(aggregateID,
             HAL.address(kAudioDevicePropertyStreamFormat, scope: kAudioDevicePropertyScopeOutput),
             initial: AudioStreamBasicDescription())
         guard let activeFormat else { throw AudioFailure("音频会话缺少已确认的 PCM 格式") }

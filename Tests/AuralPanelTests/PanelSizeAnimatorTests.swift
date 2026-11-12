@@ -18,7 +18,9 @@ struct PanelSizeAnimatorTests {
         #expect(window.frame == target)
         // 原生 animator proxy 使用两参数 setFrame:display:；不能回到手动逐帧三参数路径。
         #expect(window.manualFrameCalls == 0)
-        #expect(window.nativeRequests.count > 2)
+        // 隐藏窗口在 CI 上可能只收到起止两帧，帧数由 AppKit/显示时钟决定。
+        // 直接验证产品只调用一次原生 animator proxy；不能用自写逐帧循环凑帧数。
+        #expect(window.nativeAnimatorCalls == 1)
         let request = try #require(window.nativeRequests.last)
         #expect(request.frame == target)
     }
@@ -31,6 +33,7 @@ struct PanelSizeAnimatorTests {
         animator.resize(window: window, to: target, animated: false)
         #expect(window.frame == target)
         #expect(window.manualFrameCalls == 1)
+        #expect(window.nativeAnimatorCalls == 0)
     }
 
     @Test @MainActor func nativeResizeKeepsTheTopEdgeThroughoutTheMainRunLoop() {
@@ -153,6 +156,7 @@ struct PanelSizeAnimatorTests {
         window.isReleasedWhenClosed = false
         window.contentView = NSView(frame: CGRect(origin: .zero, size: window.frame.size))
         window.nativeRequests = []
+        window.nativeAnimatorCalls = 0
         window.manualFrameCalls = 0
         return window
     }
@@ -162,7 +166,13 @@ struct PanelSizeAnimatorTests {
             let frame: CGRect
         }
         var nativeRequests: [Request] = []
+        var nativeAnimatorCalls = 0
         var manualFrameCalls = 0
+
+        override func animator() -> Self {
+            nativeAnimatorCalls += 1
+            return super.animator()
+        }
 
         override func setFrame(_ frameRect: NSRect, display flag: Bool) {
             nativeRequests.append(Request(frame: frameRect))

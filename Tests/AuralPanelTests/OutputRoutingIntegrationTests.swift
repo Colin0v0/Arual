@@ -572,11 +572,299 @@ struct OutputRoutingIntegrationTests {
         #expect(audio.sessions.last?.isActive == true)
         #expect(model.shutdown())
     }
+
+    @Test func perAppCustomRoutesUseIndependentPlaybackDeviceSets() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let browser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 43)
+        let spotify = applicationRow(bundleID: "test.spotify", name: "Spotify", objectID: 44)
+        audio.additionalRows = [browser, spotify]
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker"]), for: browser.id)
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["headphone"]), for: spotify.id)
+
+        let browserSession = try #require(audio.sessions.last { $0.group.bundleID == "test.browser" })
+        let spotifySession = try #require(audio.sessions.last { $0.group.bundleID == "test.spotify" })
+        #expect(browserSession.playbackUIDs == ["speaker"])
+        #expect(spotifySession.playbackUIDs == ["headphone"])
+        #expect(browserSession.isActive && spotifySession.isActive)
+
+        // 修改 Chrome 的路由不能重建或改变 Spotify 的会话。
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker", "headphone"]), for: browser.id)
+        #expect(audio.sessions.last { $0.group.bundleID == "test.spotify" } === spotifySession)
+        #expect(audio.sessions.last { $0.group.bundleID == "test.browser" }?.playbackUIDs == ["speaker", "headphone"])
+
+        // 应用音量仍是独立控制，不携带或改写路由目标。
+        model.setApplicationGain(0.42, for: browser.id)
+        #expect(audio.sessions.last { $0.group.bundleID == "test.browser" }?.playbackUIDs == ["speaker", "headphone"])
+        #expect(audio.sessions.last { $0.group.bundleID == "test.browser" }?.gain == 0.42)
+        #expect(model.shutdown())
+    }
+
+    @Test func removingTheLastAppRouteTargetIsIgnoredWithoutAnError() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let browser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 43)
+        audio.additionalRows = [browser]
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker"]), for: browser.id)
+        model.toggleApplicationAudioRouteDevice("speaker", for: browser.id)
+
+        // 最后一个目标保持勾选，重复取消不产生顶部错误提示。
+        #expect(model.applicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["speaker"]))
+        #expect(model.operationError == nil)
+        #expect(model.shutdown())
+    }
+
+    @Test func customRouteUpdatesWhenMembersAreAddedOrRemoved() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let browser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 43)
+        audio.additionalRows = [browser]
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker"]), for: browser.id)
+        #expect(model.applicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["speaker"]))
+
+        #expect(model.updateSimultaneousOutput(["speaker", "headphone", "usb"]))
+        #expect(model.applicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["speaker"]))
+
+        #expect(model.updateSimultaneousOutput(["headphone", "usb"]))
+        // 用户从组里移除 speaker 后，自定义意图不能继续指向组外设备。
+        #expect(model.applicationAudioRoute(for: browser.id) == .allOutputs)
+        #expect(model.appAudioRoutes["bundle:test.browser"] == nil)
+        #expect(model.shutdown())
+    }
+
+    @Test func temporarilyDisconnectedCustomTargetFallsBackThenRestoresByUID() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let browser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 43)
+        audio.additionalRows = [browser]
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["headphone"]), for: browser.id)
+        #expect(model.effectiveApplicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["headphone"]))
+
+        hardware.offline.insert(2)
+        hardware.inactive.insert("headphone")
+        for _ in 0..<6 {
+            audio.now = audio.now.addingTimeInterval(0.1)
+            model.refresh()
+        }
+        #expect(model.applicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["headphone"]))
+        #expect(model.effectiveApplicationAudioRoute(for: browser.id) == .allOutputs)
+
+        hardware.offline.remove(2)
+        hardware.inactive.remove("headphone")
+        for _ in 0..<20 {
+            audio.now = audio.now.addingTimeInterval(0.1)
+            model.refresh()
+            if model.applicationAudioRoutingEnabled,
+               model.effectiveApplicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["headphone"]) {
+                break
+            }
+        }
+        #expect(model.effectiveApplicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["headphone"]))
+        #expect(audio.sessions.last { $0.group.bundleID == "test.browser" }?.playbackUIDs == ["headphone"])
+        #expect(model.shutdown())
+    }
+
+    @Test func leavingAndReenteringMultiOutputRestoresSavedCustomRoute() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let browser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 43)
+        audio.additionalRows = [browser]
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker"]), for: browser.id)
+        #expect(model.effectiveApplicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["speaker"]))
+
+        model.stopSimultaneousOutput()
+        #expect(!model.applicationAudioRoutingEnabled)
+        #expect(model.applicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["speaker"]))
+        #expect(model.sessions.isEmpty)
+
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        #expect(model.effectiveApplicationAudioRoute(for: browser.id) == .custom(deviceUIDs: ["speaker"]))
+        #expect(audio.sessions.last { $0.group.bundleID == "test.browser" }?.playbackUIDs == ["speaker"])
+        #expect(model.shutdown())
+    }
+
+    @Test func savedRouteRestoresForTheSameBundleAfterModelRestart() throws {
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let firstHardware = RoutingTestHardware()
+        let firstAudio = SessionFixture()
+        let firstBrowser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 43)
+        firstAudio.additionalRows = [firstBrowser]
+        let firstModel = AppModel(outputHardware: firstHardware.hardware, startsMonitoring: false,
+                                  applicationAudio: firstAudio.environment,
+                                  appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+        #expect(firstModel.startSimultaneousOutput(["speaker", "headphone"]))
+        firstModel.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker"]), for: firstBrowser.id)
+        #expect(firstModel.shutdown())
+
+        // 新模型模拟应用重启：只凭稳定 bundle 身份恢复设备 UID 路由。
+        let secondHardware = RoutingTestHardware()
+        let secondAudio = SessionFixture()
+        let secondBrowser = applicationRow(bundleID: "test.browser", name: "Google Chrome", objectID: 143)
+        secondAudio.additionalRows = [secondBrowser]
+        let secondModel = AppModel(outputHardware: secondHardware.hardware, startsMonitoring: false,
+                                   applicationAudio: secondAudio.environment,
+                                   appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
+        #expect(secondModel.startSimultaneousOutput(["speaker", "headphone"]))
+        #expect(secondModel.effectiveApplicationAudioRoute(for: secondBrowser.id)
+                == .custom(deviceUIDs: ["speaker"]))
+        #expect(secondAudio.sessions.last { $0.group.bundleID == "test.browser" }?.playbackUIDs == ["speaker"])
+        #expect(secondModel.shutdown())
+    }
+
+    @Test func deniedPermissionDisablesAppControlsWithoutStartingSilentSessions() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        audio.captureAccess = .denied
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+        model.setMeteringVisible(true, for: .popover)
+        model.setApplicationGain(0.2, for: audio.row.id)
+        model.toggleApplicationMute(audio.row.id)
+        model.applyApplication(audio.row.id)
+        #expect(model.audioCaptureAccess == .denied)
+        #expect(model.sessions.isEmpty && audio.sessions.isEmpty)
+        #expect(model.mixStates[audio.row.id]?.gain == 1)
+        #expect(model.mixStates[audio.row.id]?.muted == false)
+        #expect(model.mixStates[audio.row.id]?.failure == nil)
+        #expect(model.operationError == nil)
+        #expect(model.audio != nil && model.audioError == nil)
+        #expect(model.shutdown())
+    }
+
+    @Test func permissionRevocationStopsProcessingButKeepsGainAndRouteIntent() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+        model.setMeteringVisible(true, for: .popover)
+        model.setApplicationGain(0.35, for: audio.row.id)
+        #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
+        model.setApplicationAudioRoute(.custom(deviceUIDs: ["speaker"]), for: audio.row.id)
+        #expect(audio.sessions.last?.isActive == true)
+
+        audio.captureAccess = .denied
+        model.refresh()
+        #expect(model.sessions.isEmpty)
+        #expect(audio.sessions.allSatisfy { $0.isReleased })
+        #expect(model.levelSource(for: audio.row.id).level == nil)
+        #expect(model.mixStates[audio.row.id]?.gain == 0.35)
+        #expect(model.applicationAudioRoute(for: audio.row.id) == .custom(deviceUIDs: ["speaker"]))
+        #expect(model.mixStates[audio.row.id]?.failure == nil)
+        #expect(model.operationError == nil)
+        // 权限只影响应用处理，不退出用户已经确认的多设备输出组。
+        #expect(model.outputRouting.isSimultaneous)
+
+        audio.captureAccess = .authorized
+        model.refresh()
+        #expect(model.audioCaptureAccess == .authorized)
+        #expect(audio.sessions.last?.isActive == true)
+        #expect(audio.sessions.last?.gain == 0.35)
+        #expect(audio.sessions.last?.playbackUIDs == ["speaker"])
+        #expect(model.shutdown())
+    }
+
+    @Test func reopeningThePanelChecksPermissionBeforeCreatingAMeter() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+        audio.captureAccess = .denied
+        model.setMeteringVisible(true, for: .popover)
+        #expect(model.audioCaptureAccess == .denied)
+        #expect(audio.sessions.isEmpty)
+        #expect(model.shutdown())
+    }
+
+    @Test func gainingPermissionRestartsReadOnlyMetersWithoutManagingVolume() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        audio.captureAccess = .notDetermined
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+        model.setMeteringVisible(true, for: .popover)
+        #expect(model.sessions.isEmpty)
+        audio.captureAccess = .authorized
+        model.refresh()
+        #expect(audio.sessions.last?.mode == .metering)
+        #expect(audio.sessions.last?.isActive == true)
+        #expect(model.mixStates[audio.row.id]?.managed == false)
+        #expect(model.shutdown())
+    }
+
+    @Test func unavailablePermissionQueryDoesNotPretendAuthorizedOrDenied() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        audio.captureAccess = .unavailable
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+        model.setMeteringVisible(true, for: .popover)
+        #expect(model.audioCaptureAccess == .unavailable)
+        #expect(model.sessions.isEmpty)
+        #expect(model.shutdown())
+    }
+
+    private func applicationRow(bundleID: String, name: String, objectID: AudioObjectID) -> ApplicationAudioRow {
+        let id = "bundle:\(bundleID)"
+        let group = AudioProcessGroup(id: id, bundleID: bundleID,
+                                      processIDs: [Int32(objectID)], objectIDs: [objectID])
+        return ApplicationAudioRow(id: id, bundleID: bundleID, name: name,
+                                   applicationURL: nil, group: group, isRunningOutput: true)
+    }
 }
 
 @MainActor
 private final class SessionFixture {
     var playing = true
+    var captureAccess: SystemAudioCaptureAccess = .authorized
     var omitsApplication = false
     var additionalRows: [ApplicationAudioRow] = []
     var routePending = false
@@ -602,7 +890,7 @@ private final class SessionFixture {
                 session.healthFailure = { self.healthError }
                 self.sessions.append(session)
                 return session
-            }, now: { self.now })
+            }, now: { self.now }, captureAccess: { self.captureAccess })
     }
 }
 
@@ -611,6 +899,7 @@ private final class MemoryAudioSession: ApplicationAudioSession {
     let group: AudioProcessGroup
     let output: AudioOutput
     let mode: ApplicationAudioMode
+    let playbackRoute: ApplicationPlaybackRoute
     let playbackUIDs: [String]
     var isActive = false
     var isReleased = true
@@ -621,7 +910,8 @@ private final class MemoryAudioSession: ApplicationAudioSession {
     var healthFailure: () -> Error? = { nil }
     init(group: AudioProcessGroup, output: AudioOutput, route: ApplicationPlaybackRoute?, mode: ApplicationAudioMode) {
         self.group = group; self.output = output; self.mode = mode
-        playbackUIDs = route?.playbackDeviceUIDs ?? [output.uid]
+        playbackRoute = route ?? .single(output)
+        playbackUIDs = playbackRoute.playbackDeviceUIDs
     }
     func setGain(_ value: Float) throws { gain = value }
     func setMuted(_ value: Bool) { muted = value }

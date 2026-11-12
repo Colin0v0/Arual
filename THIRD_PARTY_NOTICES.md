@@ -27,7 +27,18 @@
 
 ## FineTune：实现研究（不包含源代码）
 
-本次阅读其音频进程监控与宿主归属思路，确认“音频进程不等于用户应用”、需要合并辅助进程并排除内部音频服务。Aural 没有复制其 GPL 源文件、私有 responsibility 查询或后备识别分支；自行使用公开 libproc 的进程信息、父 PID 与执行路径构造归属证据。
+- 仓库：https://github.com/ronitsingh10/FineTune
+- 对照提交：`2285279d36d3f8115c1c2d4aecd904f1bdf96a51`
+- 许可：GPLv3。Aural 是 MIT 项目，没有复制或改写其源文件。
+
+本次阅读其音频进程监控、宿主归属与应用多设备路由思路，确认“音频进程不等于用户应用”、需要合并辅助进程并排除内部音频服务，以及应用级路由需要 Process Tap 与目标设备私有聚合。Aural 没有复制其 GPL 源文件、设备切换后备链、stereo mixdown 后备路径、私有 responsibility 查询或界面资源；进程归属自行使用公开 libproc 的进程信息、父 PID 与执行路径构造证据，路由则由 Aural 现有 `CATapDescription`、私有聚合同步和严格错误路径独立实现。
+
+## 系统音频权限：实现研究（不包含源代码）
+
+- FineTune：阅读 `AudioRecordingPermission.swift`、`PermissionBannerView.swift`，了解拒绝状态提示和系统设置入口的处理方式。
+- AudioCap：https://github.com/insidegui/AudioCap ，阅读 `ProcessTap/AudioRecordingPermission.swift`，确认其同样隔离非公开 TCC 状态查询。
+- Aural 的权限枚举、只读 API 绑定、授权集合解析、生命周期协调、文案及测试均独立实现；没有复制、翻译或派生这两个项目的源文件，不引入其依赖或授权成功的替代分支。
+- 查询集中于 `Sources/AuralCore/SystemAudioCaptureAccess.swift`。`TCCAccessPreflight` 为非公开 API，系统升级后可能不可用；此时明确暂停应用处理并显示无法检查，不假定已授权。
 
 ## 0.1.7 新增的 HeadBridge 驱动复用
 

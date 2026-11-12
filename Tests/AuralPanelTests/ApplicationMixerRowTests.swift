@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import SwiftUI
 import Testing
 import AuralCore
@@ -16,6 +17,18 @@ struct ApplicationMixerRowTests {
         state.enable(outputUID: "test-output")
         state.fail("录制权限尚未允许，请在系统设置中检查屏幕与系统音频录制权限。")
         let image = try renderRow(state: state, level: nil)
+        #expect(image.size.height <= 46)
+    }
+
+    @Test @MainActor func multiOutputAddsAClickableRoutingButtonWithoutGrowingTheRow() throws {
+        let speaker = AudioOutput(id: 1, uid: "speaker", name: "扬声器",
+                                  transport: kAudioDeviceTransportTypeBuiltIn)
+        let headphones = AudioOutput(id: 2, uid: "headphones", name: "耳机",
+                                     transport: kAudioDeviceTransportTypeBluetooth)
+        let image = try renderRow(state: ApplicationMixState(), level: 0.4,
+                                  routingEnabled: true,
+                                  audioRoute: .custom(deviceUIDs: ["speaker"]),
+                                  routeOutputs: [speaker, headphones])
         #expect(image.size.height <= 46)
     }
 
@@ -43,7 +56,10 @@ struct ApplicationMixerRowTests {
         try png.write(to: URL(fileURLWithPath: "/tmp/aural-application-row-hover-light.png"))
     }
 
-    @MainActor private func renderRow(state: ApplicationMixState, level: Float?) throws -> NSImage {
+    @MainActor private func renderRow(state: ApplicationMixState, level: Float?,
+                                      routingEnabled: Bool = false,
+                                      audioRoute: AppAudioRoute = .allOutputs,
+                                      routeOutputs: [AudioOutput] = []) throws -> NSImage {
         // 明确的测试夹具，不进入产品数据源，不请求权限或建立 tap。
         let app = try #require(applicationFixture())
         let levelSource = ApplicationLevelSource()
@@ -52,7 +68,10 @@ struct ApplicationMixerRowTests {
                                       levelSource: levelSource, metersVisible: true,
                                       awaitingStream: false,
                                       status: "测试布局", toggleMute: {}, setGain: { _ in },
-                                      retryMeter: {}, applyConfiguration: {}, stopManaging: {})
+                                      retryMeter: {}, applyConfiguration: {}, stopManaging: {},
+                                      routingEnabled: routingEnabled,
+                                      audioRoute: audioRoute,
+                                      routeOutputs: routeOutputs)
             .font(PanelStyle.bodyFont)
             .frame(width: PanelMetrics.width - 24)
             .background(PanelStyle.canvas)
@@ -62,6 +81,7 @@ struct ApplicationMixerRowTests {
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
         var actionCount = 0
+        var routingMenuCount = 0
         func validateControls(_ view: NSView) {
             if let button = view as? PanelActionControl {
                 actionCount += 1
@@ -70,6 +90,10 @@ struct ApplicationMixerRowTests {
                 #expect(button.bounds.size == PanelActionMetrics.square)
                 #expect(rect.minX >= 0)
                 #expect(rect.maxX <= host.bounds.width)
+                if button.makeMenu != nil {
+                    routingMenuCount += 1
+                    #expect(button.showsMenuOnClick)
+                }
             }
             if let slider = view as? NSSlider {
                 #expect(slider.bounds.width >= 60)
@@ -77,7 +101,8 @@ struct ApplicationMixerRowTests {
             view.subviews.forEach(validateControls)
         }
         validateControls(host)
-        #expect(actionCount == 1) // 只剩静音按钮，不保留可见的三个点入口。
+        #expect(actionCount == (routingEnabled ? 2 : 1))
+        #expect(routingMenuCount == (routingEnabled ? 1 : 0))
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let image = NSImage(size: host.bounds.size)

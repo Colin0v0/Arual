@@ -6,6 +6,8 @@ public protocol ApplicationAudioSession: AnyObject {
     var group: AudioProcessGroup { get }
     var output: AudioOutput { get }
     var mode: ApplicationAudioMode { get }
+    /// 会话实际使用的捕获源与重放目标；模型据此判断是否需要因设备集合变化重建。
+    var playbackRoute: ApplicationPlaybackRoute { get }
     var isActive: Bool { get }
     var isReleased: Bool { get }
     func setGain(_ value: Float) throws
