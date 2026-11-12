@@ -140,7 +140,7 @@ struct SessionStateTests {
         #expect(!route.acceptsProcessRouteUIDs(["third.party.output"]))
     }
 
-    @Test func activeProcessRequiresStableAllowedRoute() throws {
+    @Test func activeProcessRejectsConflictingRoutesButNotUnreportedDeviceMetadata() throws {
         let memberA = AudioOutput(id: 11, uid: "member.a", name: "成员 A",
                                   transport: kAudioDeviceTransportTypeBuiltIn)
         let memberB = AudioOutput(id: 12, uid: "member.b", name: "成员 B",
@@ -150,11 +150,26 @@ struct SessionStateTests {
         let route = try ApplicationPlaybackRoute(output: aggregate, playbackOutputs: [memberA, memberB],
                                                  mainOutputUID: memberA.uid)
         #expect(route.acceptsActiveProcessRoutes([]))
-        #expect(!route.acceptsActiveProcessRoutes([
+        #expect(route.acceptsActiveProcessRoutes([
             ProcessOutputRoute(isRunningOutput: true, deviceUIDs: [])
         ]))
         #expect(!route.acceptsActiveProcessRoutes([
             ProcessOutputRoute(isRunningOutput: true, deviceUIDs: ["third.party.output"])
+        ]))
+    }
+
+    @Test func missingProcessMetadataNeverChangesTheExplicitTapSourceOrTargets() {
+        let output = AudioOutput(id: 21, uid: "chosen.output", name: "用户选择的输出",
+                                 transport: kAudioDeviceTransportTypeBluetooth)
+        let route = ApplicationPlaybackRoute.single(output)
+        #expect(route.acceptsActiveProcessRoutes([
+            ProcessOutputRoute(isRunningOutput: true, deviceUIDs: [])
+        ]))
+        #expect(route.tapDeviceUID == output.uid)
+        #expect(route.playbackDeviceUIDs == [output.uid])
+        #expect(route.acceptedProcessRouteUIDs == [output.uid])
+        #expect(!route.acceptsActiveProcessRoutes([
+            ProcessOutputRoute(isRunningOutput: true, deviceUIDs: ["another.output"])
         ]))
     }
 

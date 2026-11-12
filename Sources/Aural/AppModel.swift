@@ -77,6 +77,8 @@ final class AppModel: ObservableObject {
     private var timer: Timer?
     private var meterTimer: Timer?
     private var meterEnvelopes: [String: AudioLevelEnvelope] = [:]
+    /// 只记录每个会话首次读到真实非零峰值，便于区分“已授权”和“确实收到音频”。
+    private var observedAudioSignals: Set<String> = []
     /// 每个应用拥有独立发布源，30Hz 电平不会触发 AppModel 的全局 objectWillChange。
     private var levelSources: [String: ApplicationLevelSource] = [:]
     private var visibleMeterSurfaces: Set<MeterSurface> = []
@@ -85,7 +87,6 @@ final class AppModel: ObservableObject {
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
-    private let permissionProbe = AudioPermissionProbe()
     private var outputRouteListener: AudioObjectPropertyListenerBlock?
     private var mediaOutputAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -277,18 +278,13 @@ final class AppModel: ObservableObject {
         return access.allowsApplicationAudio
     }
 
-    func requestAudioCaptureAccess() {
-        // 使用公开 Process Tap 触发系统申请；TCC SPI 只读，不发起私有授权请求。
-        do { try permissionProbe.request() }
-        catch { operationError = error.localizedDescription }
-        refresh()
-    }
-
-    func openAudioCaptureSettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-        if !NSWorkspace.shared.open(url) {
+    @discardableResult
+    func openAudioCaptureSettings() -> Bool {
+        if !NSWorkspace.shared.open(AudioCapturePermissionAlert.systemSettingsURL) {
             operationError = "未能打开系统设置，请手动进入隐私与安全性 → 屏幕与系统音频录制。"
+            return false
         }
+        return true
     }
 
     /// 保留可见行的电平源身份；路由切换可以中断真实电平，但不应重建整行的订阅对象。
@@ -771,6 +767,10 @@ final class AppModel: ObservableObject {
                 levelSources[app.id]?.update(nil)
                 continue
             }
+            if peak > 0, observedAudioSignals.insert(app.id).inserted {
+                // 在主线程记录状态，不在实时回调中写日志，也不记录或保存音频样本。
+                Self.audioLog.notice("Received real audio signal for \(app.id, privacy: .public)")
+            }
             if meterEnvelopes[app.id] == nil { meterEnvelopes[app.id] = AudioLevelEnvelope() }
             let level = meterEnvelopes[app.id]?.update(peak: peak, at: now)
             levelSources[app.id]?.update(level)
@@ -1046,16 +1046,24 @@ final class AppModel: ObservableObject {
     }
 
     private func recordSessionFailure(_ error: Error, for key: String) {
-        guard error is ApplicationRoutePending, let applicationEnvironment else {
+        guard let pending = error as? ApplicationRoutePending, let applicationEnvironment else {
             latchApplicationFailure(error.localizedDescription, for: key)
             return
         }
         let now = applicationEnvironment.now()
         if let since = sessionRouteWaitSince[key] {
             if now.timeIntervalSince(since) >= 3 {
-                latchApplicationFailure("应用未在期限内跟随已确认输出，请重新应用", for: key)
+                let message = pending.reason == .formatChange
+                    ? "应用捕获与输出的音频格式尚未一致，请重新应用"
+                    : "应用未在期限内跟随已确认输出，请重新应用"
+                latchApplicationFailure(message, for: key)
             }
-        } else { sessionRouteWaitSince[key] = now }
+        } else {
+            sessionRouteWaitSince[key] = now
+            if let detail = pending.detail {
+                Self.audioLog.notice("Application \(key, privacy: .public) waiting for audio: \(detail, privacy: .public)")
+            }
+        }
     }
 
     /// Aural 聚合只负责捕获来源；重放必须回到它的真实硬件成员，
@@ -1106,6 +1114,7 @@ final class AppModel: ObservableObject {
         guard let session = sessions[key] else { return true }
         do {
             try session.stop(); sessions.removeValue(forKey: key); cleanupErrors.removeValue(forKey: key)
+            observedAudioSignals.remove(key)
             levelSources[key]?.update(nil); meterEnvelopes.removeValue(forKey: key)
             return true
         } catch {
@@ -1121,8 +1130,6 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() -> Bool {
-        do { try permissionProbe.stop() }
-        catch { operationError = error.localizedDescription; return false }
         guard stopAll() else { return false }
         if routing.retainedRoute != nil || !outputRouting.pendingCleanup.isEmpty {
             routing.stop(at: routingNow)

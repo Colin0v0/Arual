@@ -8,13 +8,33 @@ enum AuralUpdateHelperMain {
         // 让 helper 脱离 App 的会话/进程组，避免 App 退出时被 launchd 一并回收。
         _ = setsid()
         do {
-            let options = try Options(arguments: CommandLine.arguments)
-            try run(options: options)
+            if CommandLine.arguments.contains("--relaunch") {
+                try relaunch(options: RelaunchOptions(arguments: CommandLine.arguments))
+            } else {
+                let options = try Options(arguments: CommandLine.arguments)
+                try run(options: options)
+            }
             exit(0)
         } catch {
             appendLog("更新 helper 失败：\(error.localizedDescription)\n")
             exit(1)
         }
+    }
+
+    /// 仅重启当前应用，不替换包、不改隔离标记，也不读取更新暂存目录。
+    private static func relaunch(options: RelaunchOptions) throws {
+        let app = URL(fileURLWithPath: options.appPath)
+        let data = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        guard let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              plist["CFBundleIdentifier"] as? String == "local.aural.app",
+              plist["CFBundleShortVersionString"] as? String == options.version else {
+            throw HelperError.invalidPayload
+        }
+        _ = try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+        try waitForExit(pid: options.pid)
+        // 不使用 -n：如果 macOS 自己已经重新打开应用，则复用该实例，避免双进程处理音频。
+        _ = try run("/usr/bin/open", ["-g", app.path])
+        appendLog("系统音频授权后已重新打开 Aural\n")
     }
 
     private static func run(options: Options) throws {
@@ -111,6 +131,31 @@ enum AuralUpdateHelperMain {
             }
         } catch {
             // helper 日志失败不能阻断安装。
+        }
+    }
+}
+
+/// 重启参数不接受更新暂存目录，避免普通授权恢复误走安装流程。
+private struct RelaunchOptions {
+    let pid: Int32
+    let appPath: String
+    let version: String
+
+    init(arguments: [String]) throws {
+        func value(after key: String) throws -> String {
+            guard let index = arguments.firstIndex(of: key), arguments.indices.contains(index + 1) else {
+                throw HelperError.invalidArguments
+            }
+            return arguments[index + 1]
+        }
+        guard let pid = Int32(try value(after: "--pid")), pid > 0 else {
+            throw HelperError.invalidArguments
+        }
+        self.pid = pid
+        appPath = try value(after: "--app")
+        version = try value(after: "--version")
+        guard appPath.hasPrefix("/"), appPath.hasSuffix(".app"), !version.isEmpty else {
+            throw HelperError.invalidArguments
         }
     }
 }

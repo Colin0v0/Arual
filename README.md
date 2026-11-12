@@ -17,7 +17,7 @@
 
 Aural keeps everyday audio controls in one small menu bar panel: switch speakers or microphones, adjust apps separately, use multiple outputs, and control compatible Bluetooth headphones.
 
-> **Development preview · 0.2.0**
+> **Development preview · 0.2.1**
 >
 > Aural is still being tested across different Macs and headphones. Some features depend on the device, firmware, and macOS version you use.
 

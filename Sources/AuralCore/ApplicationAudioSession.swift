@@ -21,5 +21,11 @@ public protocol ApplicationAudioSession: AnyObject {
 /// 路由尚未传播，或同一蓝牙设备正在改变原生 PCM 格式，都不是权限失败。
 /// 调用层按截止时间等待同一目标，并按真实格式重建同一处理链。
 public struct ApplicationRoutePending: Error {
-    public init() {}
+    public enum Reason: Sendable { case routePropagation, formatChange }
+    public let reason: Reason
+    public let detail: String?
+    public init(reason: Reason = .routePropagation, detail: String? = nil) {
+        self.reason = reason
+        self.detail = detail
+    }
 }
