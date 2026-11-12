@@ -20,6 +20,8 @@ struct PanelActionButton: NSViewRepresentable {
     let tint: Color?
     let hoverStyle: PanelActionHoverStyle
     let isLoading: Bool
+    /// 路由入口需要单击直接展开 NSMenu；其他按钮仍保持左键执行主操作。
+    var showsMenuOnClick = false
     var alignsContentToTrailing = false
     @Environment(\.isEnabled) private var isEnabled
 
@@ -64,6 +66,7 @@ struct PanelActionButton: NSViewRepresentable {
         button.setAccessibilityValue(isLoading ? "正在\(title)" : nil)
         button.activate = action
         button.makeMenu = menu
+        button.showsMenuOnClick = showsMenuOnClick
     }
 
     // 图标锁定宽高；文字只扩展宽度，不接受系统字形边距引入的额外高度。
@@ -117,6 +120,7 @@ final class PanelActionCell: NSButtonCell {
 final class PanelActionControl: NSButton {
     var activate: () -> Void = {}
     var makeMenu: (() -> NSMenu)?
+    var showsMenuOnClick = false
     private var renderedContent: PanelActionButton.Content?
     var hoverStyle: PanelActionHoverStyle = .background { didSet { updateAppearance() } }
     var idleTint: NSColor? { didSet { updateAppearance() } }
@@ -286,6 +290,12 @@ final class PanelActionControl: NSButton {
 
     @objc private func performPanelAction() {
         guard !isLoading else { return }
+        if showsMenuOnClick, let menu = makeMenu?() {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -3), in: self)
+            pressed = false
+            updateHoverFromPointer()
+            return
+        }
         activate()
     }
 }

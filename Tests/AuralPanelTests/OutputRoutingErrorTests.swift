@@ -258,7 +258,7 @@ struct OutputRoutingErrorTests {
             readApplications: { _ in ([], 0) },
             hasMixerConflict: { false },
             makeSession: { _, _, _, _ in fatalError("该测试不创建音频会话") },
-            now: { now }
+            now: { now }, captureAccess: { .authorized }
         )
         let model = AppModel(outputHardware: fixture.hardware, startsMonitoring: false,
                              applicationAudio: environment)

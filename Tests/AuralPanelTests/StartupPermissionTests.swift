@@ -85,7 +85,7 @@ struct StartupPermissionTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let data = try Data(contentsOf: root.appendingPathComponent("Resources/Info.plist"))
         let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        #expect(plist["NSAudioCaptureUsageDescription"] as? String == "用于调节应用音量。")
+        #expect(plist["NSAudioCaptureUsageDescription"] as? String == "用于调节应用音量与应用独立输出路由。")
         #expect(plist["NSBluetoothAlwaysUsageDescription"] as? String == "用于控制蓝牙耳机。")
     }
 }

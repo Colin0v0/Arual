@@ -9,11 +9,16 @@ struct ApplicationMixerRow: View {
     let metersVisible: Bool
     let awaitingStream: Bool
     let status: String
+    let routingEnabled: Bool
+    let audioRoute: AppAudioRoute
+    let routeOutputs: [AudioOutput]
     let toggleMute: () -> Void
     let setGain: (Float) -> Void
     let retryMeter: () -> Void
     let applyConfiguration: () -> Void
     let stopManaging: () -> Void
+    let setAudioRoute: (AppAudioRoute) -> Void
+    let toggleRouteOutput: (String) -> Void
     @Environment(\.appLanguage) private var language
     @StateObject private var hover: PanelRowHoverState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -24,6 +29,10 @@ struct ApplicationMixerRow: View {
          awaitingStream: Bool, status: String, toggleMute: @escaping () -> Void,
          setGain: @escaping (Float) -> Void, retryMeter: @escaping () -> Void,
          applyConfiguration: @escaping () -> Void, stopManaging: @escaping () -> Void,
+         routingEnabled: Bool = false, audioRoute: AppAudioRoute = .allOutputs,
+         routeOutputs: [AudioOutput] = [],
+         setAudioRoute: @escaping (AppAudioRoute) -> Void = { _ in },
+         toggleRouteOutput: @escaping (String) -> Void = { _ in },
          initiallyHovered: Bool = false) {
         self.app = app
         self.state = state
@@ -31,11 +40,16 @@ struct ApplicationMixerRow: View {
         self.metersVisible = metersVisible
         self.awaitingStream = awaitingStream
         self.status = status
+        self.routingEnabled = routingEnabled
+        self.audioRoute = audioRoute
+        self.routeOutputs = routeOutputs
         self.toggleMute = toggleMute
         self.setGain = setGain
         self.retryMeter = retryMeter
         self.applyConfiguration = applyConfiguration
         self.stopManaging = stopManaging
+        self.setAudioRoute = setAudioRoute
+        self.toggleRouteOutput = toggleRouteOutput
         _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
     }
 
@@ -69,7 +83,7 @@ struct ApplicationMixerRow: View {
                 }
             }
             Text(app.label).lineLimit(1).help(app.bundleID)
-                .frame(width: 128, alignment: .leading)
+                .frame(width: routingEnabled ? 100 : 128, alignment: .leading)
             PanelActionButton(systemName: state.muted ? "speaker.slash.fill" : "speaker.wave.2",
                               title: state.muted
                                   ? L10n.format("取消静音 %@", language: language, arguments: [app.label])
@@ -82,9 +96,12 @@ struct ApplicationMixerRow: View {
             .accessibilityValue(L10n.text(state.muted ? "已静音" : "未静音", language: language))
             PanelVolumeSlider(value: Binding(get: { Double(state.gain) }, set: { setGain(Float($0)) }),
                               label: L10n.format("%@ 的独立增益", language: language, arguments: [app.label]))
-                .frame(minWidth: PanelMetrics.compactSliderMinimumWidth)
+                .frame(minWidth: routingEnabled ? 112 : PanelMetrics.compactSliderMinimumWidth)
                 .help(L10n.text("应用播放增益，不影响麦克风输入", language: language))
             PanelPercentage(value: state.gain, highlighted: hover.active)
+            if routingEnabled {
+                routingButton
+            }
         }
         .padding(.horizontal, PanelMetrics.horizontalInset).padding(.vertical, 9)
         .panelContentHover(hover.active)
@@ -106,6 +123,71 @@ struct ApplicationMixerRow: View {
             Button(L10n.text("应用配置", language: language), action: applyConfiguration)
         }
         if state.managed { Button(L10n.text("停止管理", language: language), action: stopManaging) }
+    }
+
+    /// 路由按钮保持 26pt 方形并沿用现有前景悬停规则，避免应用行因为新增入口撑高。
+    private var routingButton: some View {
+        var button = PanelActionButton(
+            systemName: "arrow.triangle.branch",
+            title: routingTitle,
+            tint: audioRoute.isCustom ? PanelStyle.accent : nil,
+            hoverStyle: .foregroundOnly,
+            menu: { routeMenu() }
+        )
+        button.showsMenuOnClick = true
+        return button
+    }
+
+    private var routingTitle: String {
+        guard audioRoute.isCustom else {
+            return L10n.text("全部输出：自动包含新增设备", language: language)
+        }
+        let names = routeOutputs
+            .filter { audioRoute.customDeviceUIDs.contains($0.uid) }
+            .map(\.name)
+        guard !names.isEmpty else {
+            return L10n.text("自定义路由暂不可用，当前按全部输出播放", language: language)
+        }
+        return L10n.format("自定义输出：%@", language: language,
+                           arguments: [names.joined(separator: language == .english ? ", " : "、")])
+    }
+
+    /// 菜单只保留“全部输出”与单个设备选择，不再提供额外恢复操作。
+    private func routeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let allOutputs = PanelActionMenuItem(title: L10n.text("全部输出（默认）", language: language)) {
+            setAudioRoute(.allOutputs)
+        }
+        allOutputs.state = audioRoute == .allOutputs ? .on : .off
+        menu.addItem(allOutputs)
+
+        let activeUIDs = Set(routeOutputs.map(\.uid))
+        let selectedActiveUIDs = audioRoute.isCustom
+            ? audioRoute.customDeviceUIDs.intersection(activeUIDs)
+            : activeUIDs
+
+        if !routeOutputs.isEmpty {
+            menu.addItem(.separator())
+        }
+        for output in routeOutputs {
+            let item = PanelActionMenuItem(title: output.name) {
+                toggleRouteOutput(output.uid)
+            }
+            let isSelected = selectedActiveUIDs.contains(output.uid)
+            item.state = isSelected ? .on : .off
+            // 最后一个有效输出不能通过菜单取消；保留唯一目标，避免出现空路由错误。
+            item.isEnabled = !(isSelected && selectedActiveUIDs.count == 1)
+            menu.addItem(item)
+        }
+
+        if audioRoute.isCustom, selectedActiveUIDs.isEmpty {
+            let unavailable = NSMenuItem(title: L10n.text("自定义路由暂不可用，当前按全部输出播放", language: language),
+                                         action: nil, keyEquivalent: "")
+            unavailable.isEnabled = false
+            menu.addItem(unavailable)
+        }
+        return menu
     }
 }
 

@@ -45,9 +45,11 @@ public struct AudioLevelEnvelope {
 
 /// 把播放、可见性与用户管理意图区分开；只读计量不意味着启用音量接管。
 public enum ApplicationAudioIntent {
-    public static func mode(state: ApplicationMixState, isPlaying: Bool, meterVisible: Bool) -> ApplicationAudioMode? {
+    /// 自定义应用路由必须读取并重放音频；因此即使没有打开音量管理或电平表，也要进入 mixing。
+    public static func mode(state: ApplicationMixState, isPlaying: Bool, meterVisible: Bool,
+                            requiresRouting: Bool = false) -> ApplicationAudioMode? {
         guard state.failure == nil else { return nil }
-        if state.managed { return .mixing }
+        if state.managed || requiresRouting { return .mixing }
         return isPlaying && meterVisible ? .metering : nil
     }
 }

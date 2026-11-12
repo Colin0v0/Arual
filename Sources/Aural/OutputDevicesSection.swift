@@ -8,14 +8,14 @@ struct OutputDevicesSection: View {
     let setVolume: (Float, UInt32) -> Void
     let setMuted: (Bool, UInt32) -> Void
     var simultaneousUIDs: Set<String> = []
-    /// 同时输出草稿已有成员时，真实设备行必须熄灯，由下方组合入口独占选中状态。
+    /// 多设备输出草稿已有成员时，真实设备行必须熄灯，由下方组合入口独占选中状态。
     var selectionSuppressed = false
     var hiddenUID: String? = nil
     @Environment(\.appLanguage) private var language
 
     var body: some View {
         VStack(spacing: 0) {
-            // 所有聚合输出都收进唯一的“同时输出设备”入口，列表里只保留真实硬件。
+            // 所有聚合输出都收进唯一的“多设备输出”入口，列表里只保留真实硬件。
             ForEach(Self.visibleOutputs(audio.outputs, hiddenUID: hiddenUID)) { output in
                 if let control = audio.controls[output.id] {
                     AudioDeviceRow(device: output, control: control,
@@ -25,7 +25,7 @@ struct OutputDevicesSection: View {
                                     select: { select(output.id) }, setVolume: { setVolume($0, output.id) },
                                     setMuted: { setMuted($0, output.id) },
                                     selectionHint: simultaneousUIDs.isEmpty ? nil
-                                        : L10n.format("结束同时输出，仅使用“%@”播放",
+                                        : L10n.format("结束多设备输出，仅使用“%@”播放",
                                                       language: language, arguments: [output.name]))
                 } else {
                     PanelError(text: L10n.format("%@ 尚未读取设备控制状态", language: language,
@@ -44,7 +44,7 @@ struct OutputDevicesSection: View {
         }
     }
 
-    /// 同时输出启用时，选中状态只属于下方聚合行；成员设备仍可单独调音量，但不是当前默认输出。
+    /// 多设备输出启用时，选中状态只属于下方聚合行；成员设备仍可单独调音量，但不是当前默认输出。
     static func isSelected(output: AudioOutput, selectedID: UInt32,
                            simultaneousUIDs: Set<String>,
                            selectionSuppressed: Bool = false) -> Bool {

@@ -8,7 +8,7 @@ final class OutputRoutingDisclosure: ObservableObject {
     func cancel() { isChoosing = false }
 }
 
-/// 同时输出错误与关闭按钮共用操作按钮高度，文字块和按钮始终沿同一水平中心线排列。
+/// 多设备输出错误与关闭按钮共用操作按钮高度，文字块和按钮始终沿同一水平中心线排列。
 struct OutputRoutingErrorRow: View {
     let text: String
     let canDismiss: Bool
@@ -21,7 +21,7 @@ struct OutputRoutingErrorRow: View {
                 .frame(maxWidth: .infinity, minHeight: PanelActionMetrics.size, alignment: .leading)
             if canDismiss {
                 PanelActionButton(systemName: "xmark",
-                                  title: L10n.text("关闭同时输出提示", language: language),
+                                  title: L10n.text("关闭多设备输出提示", language: language),
                                   action: dismiss)
             }
         }
@@ -94,7 +94,7 @@ struct OutputRoutingSection: View {
             if !unmanagedOutputs.isEmpty {
                 Text(selectedUnmanagedOutput
                      ? L10n.text("选择一台扬声器继续播放", language: language)
-                     : L10n.text("上次的同时输出还在，清理后可重新设置", language: language))
+                     : L10n.text("上次的多设备输出还在，清理后可重新设置", language: language))
                     .font(PanelStyle.captionFont).foregroundStyle(PanelStyle.secondary)
                     .padding(.horizontal, PanelMetrics.horizontalInset)
             }
@@ -166,7 +166,7 @@ struct OutputRoutingSection: View {
         }
     }
 
-    /// 设备行与同时输出行共享零间距列表，保证分隔线位置不额外下移。
+    /// 设备行与多设备输出行共享零间距列表，保证分隔线位置不额外下移。
     private var routingList: some View {
         VStack(alignment: .leading, spacing: 0) {
             OutputDevicesSection(audio: audio, select: selectDeviceFromPhysicalList,
@@ -188,7 +188,7 @@ struct OutputRoutingSection: View {
                 .help(route.outputs.map(\.name).joined(separator: "\n"))
             } else if routing.isSimultaneous {
                 SimultaneousOutputRow(
-                    title: L10n.text("同时输出设备", language: language), selected: true,
+                    title: L10n.text("多设备输出", language: language), selected: true,
                     expanded: selection.isChoosing, control: simultaneousControl,
                     toggle: toggleEditor, setVolume: setSimultaneousVolume, setMuted: setSimultaneousMuted
                 )
@@ -208,7 +208,7 @@ struct OutputRoutingSection: View {
                 }
             } else if showSimultaneousOutput {
                 SimultaneousOutputRow(
-                    title: L10n.text("同时输出设备", language: language),
+                    title: L10n.text("多设备输出", language: language),
                     selected: false,
                     expanded: selection.isChoosing,
                     control: nil,
@@ -251,6 +251,7 @@ struct SimultaneousOutputEditor: View {
                     output: output,
                     control: controls[output.id],
                     selected: selectedUIDs.contains(output.uid),
+                    canDeselect: !(selectedUIDs.count == 1 && selectedUIDs.contains(output.uid)),
                     toggle: { toggleMember(output.uid) },
                     setVolume: { setVolume($0, output.id) },
                     setMuted: { setMuted($0, output.id) }
@@ -268,7 +269,7 @@ struct SimultaneousOutputEditor: View {
         .padding(.bottom, 2)
     }
 
-    /// 同时输出列表只提供可调音量的真实硬件；已选中的旧成员仍保留，以便用户明确移除。
+    /// 多设备输出列表只提供可调音量的真实硬件；已选中的旧成员仍保留，以便用户明确移除。
     static func visibleOutputs(outputs: [AudioOutput],
                                controls: [UInt32: AudioDeviceControlState],
                                selectedUIDs: Set<String>) -> [AudioOutput] {
@@ -286,6 +287,7 @@ private struct SimultaneousOutputDeviceRow: View {
     let output: AudioOutput
     let control: AudioDeviceControlState?
     let selected: Bool
+    let canDeselect: Bool
     let toggle: () -> Void
     let setVolume: (Float) -> Void
     let setMuted: (Bool) -> Void
@@ -329,11 +331,12 @@ private struct SimultaneousOutputDeviceRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(!canDeselect)
             .frame(width: 190, alignment: .leading)
-            .accessibilityLabel(L10n.format(selected ? "从同时输出移除：%@" : "加入同时输出：%@",
+            .accessibilityLabel(L10n.format(selected ? "从多设备输出移除：%@" : "加入多设备输出：%@",
                                             language: language, arguments: [output.name]))
             .accessibilityAddTraits(selected ? .isSelected : [])
-            .help(L10n.format(selected ? "从同时输出移除“%@”" : "将“%@”加入同时输出",
+            .help(L10n.format(selected ? "从多设备输出移除“%@”" : "将“%@”加入多设备输出",
                               language: language, arguments: [output.name]))
 
             switch control {
@@ -352,7 +355,7 @@ private struct SimultaneousOutputDeviceRow: View {
                       : L10n.text("设备未公开可写的硬件静音控制", language: language))
                 if let scalar = volume.scalar {
                     PanelVolumeSlider(value: Binding(get: { Double(scalar) }, set: { setVolume(Float($0)) }),
-                                      label: L10n.format("%@ 的同时输出音量", language: language,
+                                      label: L10n.format("%@ 的多设备输出音量", language: language,
                                                          arguments: [output.name]))
                         .frame(minWidth: 72)
                         .disabled(!volume.writable)
@@ -415,12 +418,12 @@ struct SimultaneousOutputRow: View {
                         .buttonStyle(.plain)
                         .frame(width: PanelMetrics.deviceSelectionWidth, alignment: .leading)
                         .accessibilityLabel(title)
-                        .accessibilityHint(L10n.text(expanded ? "收起同时输出设备" : "展开并更改同时输出设备",
+                        .accessibilityHint(L10n.text(expanded ? "收起多设备输出" : "展开并更改多设备输出",
                                                      language: language))
                         .accessibilityAddTraits(selected ? .isSelected : [])
 
                     PanelActionButton(systemName: control.muted == true ? "speaker.slash" : "speaker.wave.2",
-                                      title: L10n.text(control.muted == true ? "取消同时输出静音" : "静音同时输出",
+                                      title: L10n.text(control.muted == true ? "取消多设备输出静音" : "静音多设备输出",
                                                        language: language),
                                       tint: control.muted == true ? .red : nil,
                                       hoverStyle: .foregroundOnly) {
@@ -430,7 +433,7 @@ struct SimultaneousOutputRow: View {
 
                     if let scalar = control.scalar {
                         PanelVolumeSlider(value: Binding(get: { Double(scalar) }, set: { setVolume(Float($0)) }),
-                                          label: L10n.text("同时输出总音量", language: language))
+                                          label: L10n.text("多设备输出总音量", language: language))
                             .frame(minWidth: PanelMetrics.compactSliderMinimumWidth)
                             .disabled(!control.volumeWritable)
                         PanelPercentage(value: scalar, highlighted: hover.active)
@@ -456,7 +459,7 @@ struct SimultaneousOutputRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
-                .accessibilityHint(L10n.text(expanded ? "收起同时输出设备" : "展开并更改同时输出设备",
+                .accessibilityHint(L10n.text(expanded ? "收起多设备输出" : "展开并更改多设备输出",
                                              language: language))
             }
         }

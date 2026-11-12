@@ -9,6 +9,8 @@ struct ApplicationAudioEnvironment {
     var hasMixerConflict: () -> Bool
     var makeSession: (AudioProcessGroup, AudioOutput, ApplicationPlaybackRoute?, ApplicationAudioMode) -> any ApplicationAudioSession
     var now: () -> Date
+    /// 测试夹具不读取宿主权限；真实环境明确注入系统只读检查。
+    var captureAccess: () -> SystemAudioCaptureAccess
 
     static var live: Self {
         Self(readApplications: { retained in
@@ -19,6 +21,6 @@ struct ApplicationAudioEnvironment {
                 .filter { !$0.isTerminated }.compactMap(\.bundleIdentifier))
         }, makeSession: { group, output, route, mode in
             ProcessAudioSession(group: group, output: output, playbackRoute: route, mode: mode)
-        }, now: Date.init)
+        }, now: Date.init, captureAccess: SystemAudioCaptureAccess.current)
     }
 }

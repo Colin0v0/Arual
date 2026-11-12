@@ -117,7 +117,10 @@ struct AudioPanel: View {
             }
             PanelDivider().padding(.horizontal, PanelMetrics.horizontalInset)
             // 两个设备页都使用相同模型与回调，APP 音量依然是播放增益，不冒充麦克风混音。
-            ApplicationVolumeSection(model: model, metersVisible: metersVisible)
+            ApplicationVolumeSection(model: model, metersVisible: metersVisible,
+                                     routingEnabled: direction == .output
+                                         && currentPage == .output
+                                         && model.applicationAudioRoutingEnabled)
         }
     }
 
@@ -234,10 +237,7 @@ struct AudioPanel: View {
         }
         menu.addItem(.separator())
         menu.addItem(PanelActionMenuItem(title: settings.localized("音频录制权限…")) {
-            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-            if !NSWorkspace.shared.open(url) {
-                model.operationError = settings.localized("未能打开系统设置，请手动进入隐私与安全性 → 屏幕与系统音频录制。")
-            }
+            model.openAudioCaptureSettings()
         })
         let diagnostic = PanelActionMenuItem(title: settings.localized("复制耳机诊断")) {
             NSPasteboard.general.clearContents()
