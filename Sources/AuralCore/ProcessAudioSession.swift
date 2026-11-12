@@ -107,7 +107,10 @@ public struct ApplicationPlaybackRoute: Equatable, Sendable {
         let activeRoutes = routes.filter(\.isRunningOutput)
         guard !activeRoutes.isEmpty else { return true }
         return activeRoutes.allSatisfy {
-            !$0.deviceUIDs.isEmpty && acceptsProcessRouteUIDs($0.deviceUIDs)
+            // HAL 可报告“正在播放”但尚未提供设备列表；这不是已观测到路由冲突。
+            // 不从空列表推断默认设备：实际捕获仍由 tapDeviceUID 严格限定到用户选定的流。
+            // 只拒绝明确列出的其他输出，避免 Chrome 的空元数据把捕获永久挡在启动前。
+            $0.deviceUIDs.isEmpty || acceptsProcessRouteUIDs($0.deviceUIDs)
         }
     }
 
@@ -321,7 +324,8 @@ public final class ProcessAudioSession: ApplicationAudioSession {
               captured.mFormatFlags == current.mFormatFlags,
               captured.mBytesPerFrame == current.mBytesPerFrame,
               captured.mBytesPerPacket == current.mBytesPerPacket else {
-            throw ApplicationRoutePending()
+            let detail = "capture=\(captured.mSampleRate)Hz/\(captured.mChannelsPerFrame)ch/flags=\(captured.mFormatFlags); output=\(current.mSampleRate)Hz/\(current.mChannelsPerFrame)ch/flags=\(current.mFormatFlags)"
+            throw ApplicationRoutePending(reason: .formatChange, detail: detail)
         }
     }
 
@@ -334,8 +338,10 @@ public final class ProcessAudioSession: ApplicationAudioSession {
 
     private func validateRoutes() throws {
         // HAL 默认路由确认后，各 APP 的进程对象仍可能稍晚更新；只读取事实，不阻塞主线程。
-        guard playbackRoute.acceptsActiveProcessRoutes(try processOutputRoutes()) else {
-            throw ApplicationRoutePending()
+        let routes = try processOutputRoutes()
+        guard playbackRoute.acceptsActiveProcessRoutes(routes) else {
+            let actual = routes.filter(\.isRunningOutput).flatMap(\.deviceUIDs).joined(separator: ",")
+            throw ApplicationRoutePending(detail: "expected=\(playbackRoute.sourceOutputUID); actual=\(actual)")
         }
     }
 

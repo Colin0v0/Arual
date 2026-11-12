@@ -228,8 +228,19 @@ enum L10n {
         "允许访问": "Allow Access",
         "打开系统设置": "Open System Settings",
         "需要系统音频录制权限": "System Audio Recording Permission Required",
+        "开启系统录音": "Enable System Audio Recording",
+        "自动重启失败": "Automatic Restart Failed",
+        "系统音频授权请求接口不可用": "The system audio permission request API is unavailable",
+        "系统音频授权请求仍在等待用户决定": "Waiting for the system audio permission decision",
+        "在系统设置的“仅系统录音”中开启 Aural，用于应用音量、电平和音频路由。开启后 Aural 会自动重启。":
+            "Enable Aural under System Audio Recording Only in System Settings for app volume, levels, and routing. Aural will restart automatically after access is granted.",
+        "App 音频控制已暂停。请检查系统权限，Aural 确认授权后会自动重启。":
+            "App audio controls are paused. Check system permissions; Aural will restart automatically once access is confirmed.",
+        "重启组件不可用，Aural 未退出": "The restart helper is unavailable. Aural has not quit.",
         "请在系统设置中允许 Aural 录制系统音频，以使用应用音量、电平和音频路由。授权后若系统要求重新打开 Aural，请按系统提示操作。":
             "Allow Aural to record system audio in System Settings to use app volume, levels, and audio routing. If macOS asks you to reopen Aural after granting access, follow its instructions.",
+        "Aural 需要系统音频录制权限才能调节应用音量、显示电平和控制应用输出。请在系统设置中开启 Aural，然后重新打开应用。":
+            "Aural needs System Audio Recording access to control app volume, levels, and output. Enable Aural in System Settings, then reopen Aural.",
         "重新检查": "Check Again",
         "无法检查系统音频录制权限": "Cannot Check System Audio Recording Permission",
         "App 音频控制已暂停，请检查系统权限后重新打开 Aural。":
@@ -245,6 +256,8 @@ enum L10n {
         "播放音频后，可在这里单独调节音量": "Play audio to adjust each app’s volume here.",
         "音频状态不可用": "Audio status unavailable",
         "等待音频流": "Waiting for audio stream",
+        "应用捕获与输出的音频格式尚未一致，请重新应用":
+            "The app capture and output formats have not matched yet. Reapply the configuration.",
         "应用播放增益，不影响麦克风输入": "App playback gain does not affect microphone input",
         "重试电平": "Retry Level",
         "重新应用音量": "Reapply Volume",

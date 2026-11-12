@@ -20,6 +20,20 @@ public enum SystemAudioCaptureAccess: String, Equatable, Codable, Sendable {
         return .notDetermined
     }
 
+    /// 由用户在系统对话框中决定授权。完成回调是本次决定的直接结果，
+    /// 不能用同一进程可能缓存的 preflight 结果替代，否则授权后可能永远等不到重启。
+    public static func requestAccess(completion: @escaping @Sendable (Bool) -> Void) throws {
+        guard let request = AudioCaptureAccessQuery.request else {
+            throw AudioFailure("系统音频授权请求接口不可用")
+        }
+        // 显式要求系统展示授权提示；是否再次提示仍由 macOS 的 TCC 记录决定。
+        guard let promptOption = AudioCaptureAccessQuery.promptOption else {
+            throw AudioFailure("系统音频授权提示接口不可用")
+        }
+        let options = [promptOption: kCFBooleanTrue as CFBoolean] as CFDictionary
+        request("kTCCServiceAudioCapture" as CFString, options) { granted in completion(granted) }
+    }
+
     public static func current() -> Self {
         guard let query = AudioCaptureAccessQuery.function else { return .unavailable }
         return resolve(audio: query("kTCCServiceAudioCapture" as CFString, nil),
@@ -28,15 +42,28 @@ public enum SystemAudioCaptureAccess: String, Equatable, Codable, Sendable {
 }
 
 /// macOS 尚无公开的 Process Tap 授权状态查询接口。
-/// 将只读 TCC SPI 限定在这里：不申请、不修改权限，不读取 TCC 数据库或系统日志，
-/// 接口不可用就明确报告 unavailable，绝不切换查询后端或假定成功。
+/// TCC SPI 限定在这里：查询不读取数据库或日志；申请仍由 macOS 弹窗让用户决定。
+/// 接口不可用就明确报告错误，绝不切换后端、自动授予权限或假定成功。
 private enum AudioCaptureAccessQuery {
     typealias Function = @convention(c) (CFString, CFDictionary?) -> Int
+    typealias Completion = @convention(block) (Bool) -> Void
+    // TCC 会在函数返回后异步调用完成块；明确标记为逃逸，避免栈上闭包失效。
+    typealias Request = @convention(c) (CFString, CFDictionary?, @escaping Completion) -> Void
 
     // 函数指针在进程生命周期内使用，因此持有 handle，不在查询期间卸载 framework。
     static let handle = dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_LOCAL | RTLD_NOW)
+    static let request: Request? = {
+        guard let handle, let symbol = dlsym(handle, "TCCAccessRequest") else { return nil }
+        return unsafeBitCast(symbol, to: Request.self)
+    }()
     static let function: Function? = {
         guard let handle, let symbol = dlsym(handle, "TCCAccessPreflight") else { return nil }
         return unsafeBitCast(symbol, to: Function.self)
+    }()
+    static let promptOption: CFString? = {
+        guard let handle, let symbol = dlsym(handle, "kTCCAccessCheckOptionPrompt") else { return nil }
+        let value = symbol.assumingMemoryBound(to: UnsafeRawPointer?.self).pointee
+        guard let value else { return nil }
+        return Unmanaged<CFString>.fromOpaque(value).takeUnretainedValue()
     }()
 }

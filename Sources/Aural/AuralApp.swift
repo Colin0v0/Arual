@@ -8,7 +8,8 @@ final class AuralDelegate: NSObject, NSApplicationDelegate {
     private var startupTask: Task<Void, Never>?
     private var fatalStartupFailure = false
     private let bluetoothPermission = BluetoothPermissionRequest()
-    private let audioPermission = AudioPermissionProbe()
+    private let audioPermission = AudioCapturePermissionRequest.live
+    private let permissionRelaunch = ApplicationRelaunch.live
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 启动时先恢复用户保存的主题，避免设置窗口和菜单栏面板首帧使用系统默认外观。
@@ -17,45 +18,86 @@ final class AuralDelegate: NSObject, NSApplicationDelegate {
         let audio = audioPermission
         let sequence = StartupPermissionSequence(defaults: .standard,
                                                 requestBluetooth: { await bluetooth.request() },
-                                                requestAudio: { try audio.request() },
+                                                audioAccess: SystemAudioCaptureAccess.current,
+                                                requestAudio: { try await audio.request() },
                                                 audioIsReleased: { audio.isReleased })
         // 先走系统权限申请，再创建会自动连接耳机的主模型；没有额外引导页面。
         startupTask = Task { @MainActor [weak self] in
             let result = await sequence.run()
             guard !Task.isCancelled, let self else { return }
             guard result.canEnterMainInterface else {
-                // 探测输入未释放时不能继续正常运行；退出进程让系统完整回收音频资源。
+                // 系统明确拒绝时使用 Aural 自制提示框，让用户能够前往系统设置；
+                // 无论选择设置还是退出，都不进入主界面，也不保留不可用的后台实例。
+                if result.audioPermissionDenied {
+                    self.presentAudioPermissionDeniedAndQuit()
+                    return
+                }
+                // 授权请求尚未完成或初始化失败时不继续启动；退出进程让系统回收未完成的资源。
                 self.fatalStartupFailure = true
-                let alert = NSAlert()
-                alert.messageText = "音频初始化失败"
-                alert.informativeText = result.errors.joined(separator: "；")
-                alert.addButton(withTitle: "退出")
-                alert.runModal()
+                if !result.errors.isEmpty {
+                    let alert = NSAlert()
+                    alert.messageText = "音频初始化失败"
+                    alert.informativeText = result.errors.joined(separator: "；")
+                    alert.addButton(withTitle: "退出")
+                    alert.runModal()
+                }
                 NSApp.terminate(nil)
                 return
+            }
+            // 使用系统申请回调的明确允许结果直接重启，不等待旧进程缓存的 preflight 变更。
+            if result.grantedAudioDuringRequest {
+                do {
+                    try self.permissionRelaunch.request()
+                    return
+                } catch {
+                    let alert = NSAlert()
+                    alert.messageText = AppSettings.shared.localized("自动重启失败")
+                    alert.informativeText = error.localizedDescription
+                    alert.addButton(withTitle: AppSettings.shared.localized("退出"))
+                    alert.runModal()
+                    self.fatalStartupFailure = true
+                    NSApp.terminate(nil)
+                    return
+                }
             }
             let model = AppModel.shared
             if !result.errors.isEmpty { model.operationError = result.errors.joined(separator: "；") }
             self.model = model
-            self.statusPanel = StatusPanelController(model: model)
+            self.statusPanel = StatusPanelController(model: model,
+                requestAudioPermission: { try await audio.request() }, onAudioPermissionGranted: { [weak self] in
+                self?.restartAfterAudioPermissionGrant()
+            }, onAudioPermissionDenied: { [weak self] in
+                self?.presentAudioPermissionDeniedAndQuit()
+            })
             AuralUpdateChecker.shared.startAutomaticChecking()
         }
+    }
+
+    private func presentAudioPermissionDeniedAndQuit() {
+        // 权限被拒绝后主界面不可用；终止时跳过业务资源清理，避免清理失败把进程留在后台。
+        fatalStartupFailure = true
+        AuralUpdateChecker.shared.cancelPendingRestart()
+        permissionRelaunch.cancel()
+        AudioCapturePermissionAlert.present(language: AppSettings.shared.resolvedLanguage)
+    }
+
+    private func restartAfterAudioPermissionGrant() {
+        // 授权恢复只重启当前包，不同时执行另一条更新安装链。
+        AuralUpdateChecker.shared.cancelPendingRestart()
+        do { try permissionRelaunch.request() }
+        catch { model?.operationError = error.localizedDescription }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         startupTask?.cancel()
         bluetoothPermission.cancel()
+        audioPermission.cancel()
         // 主模型还不存在时，退出必须生效；系统会随进程结束回收私有探测资源。
         // 不为退出操作构造 AppModel，也不因清理失败把启动留在无界面的后台。
         guard !fatalStartupFailure, let model else { return .terminateNow }
-        do { try audioPermission.stop() }
-        catch {
-            AuralUpdateChecker.shared.cancelPendingRestart()
-            model.operationError = error.localizedDescription
-            return .terminateCancel
-        }
         guard model.shutdown() else {
             AuralUpdateChecker.shared.cancelPendingRestart()
+            permissionRelaunch.cancel()
             return .terminateCancel
         }
         return .terminateNow

@@ -13,7 +13,7 @@ for version in 0.2.0 0.12.345; do
     grep -Fq "## Aural $version 开发预览" "$NOTES"
     grep -Fq "版本 ${version}；" "$NOTES"
     grep -Fq "应用级多设备路由" "$NOTES"
-    grep -Fq "原生提示框" "$NOTES"
+    grep -Fq "原生说明框" "$NOTES"
     grep -Fq "gh release download v$version --repo test/aural" "$NOTES"
     grep -Fq "shasum -a 256 -c Aural-${version}-macOS-arm64.dmg.sha256" "$NOTES"
     grep -Fq "shasum -a 256 -c Aural-${version}-macOS-arm64.zip.sha256" "$NOTES"

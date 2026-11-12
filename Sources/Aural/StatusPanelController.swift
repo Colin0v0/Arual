@@ -10,7 +10,7 @@ final class StatusPanelController: NSObject {
     private let statusItem: NSStatusItem
     private let model: AppModel
     private var settingsWindow: SettingsWindow?
-    private var audioCaptureAlert: AudioCaptureAccessAlertController?
+    private var audioPermissionMonitor: AudioCapturePermissionMonitor?
     private let popupLayout = PanelPresentationLayout()
     private let popupSizeAnimator = PanelSizeAnimator()
     private var popupTopLeft = CGPoint.zero
@@ -22,7 +22,9 @@ final class StatusPanelController: NSObject {
     private var presentationGeneration: UInt64 = 0
     private var popupPresented = false
 
-    init(model: AppModel) {
+    init(model: AppModel, requestAudioPermission: @escaping () async throws -> Bool,
+         onAudioPermissionGranted: @escaping () -> Void,
+         onAudioPermissionDenied: @escaping () -> Void) {
         self.model = model
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let initialSize = PanelMetrics.size(contentHeight: 0)
@@ -82,16 +84,23 @@ final class StatusPanelController: NSObject {
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateSettingsWindowTitle() }
             }
-        audioCaptureAlert = AudioCaptureAccessAlertController(
+        audioPermissionMonitor = AudioCapturePermissionMonitor(
             access: model.$audioCaptureAccess.eraseToAnyPublisher(),
             currentAccess: { model.audioCaptureAccess },
-            language: { AppSettings.shared.resolvedLanguage },
-            beforePresenting: { [weak self] in self?.hidePopup() },
-            openSettings: model.openAudioCaptureSettings,
-            requestAccess: model.requestAudioCaptureAccess,
-            presentAlert: { alert in
-                NSApp.activate(ignoringOtherApps: true)
-                return alert.runModal()
+            requestDecision: { completion in
+                Task { @MainActor in
+                    do { completion(try await requestAudioPermission() ? .authorized : .denied) }
+                    catch {
+                        model.operationError = error.localizedDescription
+                        completion(.unavailable)
+                    }
+                }
+            },
+            restartAfterGrant: onAudioPermissionGranted,
+            quitWithoutPermission: { [weak self] in
+                // 权限失效属于不可恢复的运行状态，先收起主面板再显示独立的权限提示框。
+                self?.hidePopup()
+                onAudioPermissionDenied()
             })
     }
 
