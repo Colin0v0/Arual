@@ -31,6 +31,8 @@ struct SettingsView: View {
         .background(PanelStyle.canvas)
         .foregroundStyle(PanelStyle.ink)
         .preferredColorScheme(settings.appearance.colorScheme)
+        // 设置页内的分段控件也读取环境语言；在这里统一注入，避免标题已翻译而“关闭 / 开启”仍显示中文。
+        .environment(\.appLanguage, settings.resolvedLanguage)
         .onChange(of: scenePhase) { _, phase in
             // 从系统设置返回时重新读取真实登录项状态，不用本地偏好冒充注册结果。
             if phase == .active {
