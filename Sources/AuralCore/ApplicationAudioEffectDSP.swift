@@ -150,6 +150,7 @@ struct AppAudioEffectDSP {
         repeating: AppAudioEffectBiquad.bypass,
         count: AppAudioEffectEQ.bandCount
     )
+    private var spatial: AppAudioSpatialDSP
     private(set) var isWet = false
 
     init(sampleRate: Double) {
@@ -168,19 +169,21 @@ struct AppAudioEffectDSP {
         }
         wetRamp = AppAudioEffectLinearRamp(sampleRate: sampleRate, initial: 0)
         preampRamp = AppAudioEffectLinearRamp(sampleRate: sampleRate, initial: 1)
+        spatial = AppAudioSpatialDSP(sampleRate: sampleRate)
     }
 
-    /// 每个回调只检查一次原子参数字；未变化时不做任何系数换算。
-    mutating func beginBuffer(word: UInt64) {
-        guard word != lastWord else { return }
-        lastWord = word
-        guard AppAudioEffectParameterWord.enabled(in: word) else {
+    /// 每个回调只检查一次 EQ 与空间参数；未变化时不做任何系数换算。
+    mutating func beginBuffer(effectWord: UInt64, spatialWord: UInt64) {
+        spatial.beginBuffer(word: spatialWord)
+        guard effectWord != lastWord else { return }
+        lastWord = effectWord
+        guard AppAudioEffectParameterWord.enabled(in: effectWord) else {
             wetRamp.setTarget(0)
             return
         }
         var peakIndex: UInt64 = 0
         for band in 0..<AppAudioEffectEQ.bandCount {
-            let index = AppAudioEffectParameterWord.bandIndex(in: word, band: band)
+            let index = AppAudioEffectParameterWord.bandIndex(in: effectWord, band: band)
             ramps[band].setTarget(coefficientTables[band][Int(index)], frames: smoothingFrames)
             peakIndex = max(peakIndex, index)
         }
@@ -188,9 +191,11 @@ struct AppAudioEffectDSP {
         wetRamp.setTarget(1)
     }
 
-    /// 返回本帧是否需要进入湿声处理；关闭后仍会短暂处理，等待 20ms 淡出完成。
+    /// 返回本帧是否需要进入音效链；EQ 或空间任一开启都会继续处理。
+    /// 关闭后仍会短暂处理，等待 20ms 淡出和空间尾音清空完成。
     @inline(__always)
     mutating func beginFrame() -> Bool {
+        let spatialActive = spatial.beginFrame()
         guard wetRamp.current > 0 || wetRamp.target > 0 else {
             if isWet {
                 resetFilterStates()
@@ -200,7 +205,7 @@ struct AppAudioEffectDSP {
             for band in activeFrameCoefficients.indices {
                 activeFrameCoefficients[band] = .bypass
             }
-            return false
+            return spatialActive
         }
         isWet = true
         _ = wetRamp.advance()
@@ -208,7 +213,7 @@ struct AppAudioEffectDSP {
             resetFilterStates()
             limiterGain = 1
             isWet = false
-            return false
+            return spatialActive
         }
         _ = preampRamp.advance()
         for band in activeFrameCoefficients.indices {
@@ -220,6 +225,7 @@ struct AppAudioEffectDSP {
     /// 干声仍经过原本的逐 App 增益；湿声依次经过十个固定频点的峰值滤波器。
     @inline(__always)
     mutating func processPrelimiter(_ dry: Float, channel: Int) -> Float {
+        guard isWet else { return dry }
         guard dry.isFinite else { return 0 }
         let channelOffset = min(max(channel, 0), 1) * AppAudioEffectEQ.bandCount
         var sample = dry
@@ -231,6 +237,16 @@ struct AppAudioEffectDSP {
         }
         let wet = sample * preampRamp.current
         return dry + (wet - dry) * wetRamp.current
+    }
+
+    /// 空间处理位于 EQ 之后、Limiter 与多设备分发之前；每帧只生成一次混响湿声。
+    @inline(__always)
+    mutating func processSpatial(_ samples: inout (left: Float, right: Float),
+                                 channels: Int) {
+        let output = spatial.processFrame(left: samples.left,
+                                          right: samples.right,
+                                          channels: channels)
+        samples = output
     }
 
     /// 前馈峰值 Limiter 在同一帧所有声道之间共享增益，避免左右声道音量像声像一样摆动。

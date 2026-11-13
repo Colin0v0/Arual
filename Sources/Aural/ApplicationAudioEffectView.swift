@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 import AuralCore
 
+/// 音效窗口的两个页面共享同一份 App 设置，但各自的处理与预设语义保持独立。
+enum ApplicationAudioEffectPage: Hashable, CaseIterable {
+    case equalizer
+    case spatial
+}
+
 /// 独立音效窗口保留主面板的排版语言：小幅频响预览配合十根经典 EQ 推子。
 struct ApplicationAudioEffectView: View {
     @ObservedObject var model: AppModel
@@ -10,10 +16,11 @@ struct ApplicationAudioEffectView: View {
     let applicationURL: URL?
     @ObservedObject private var appSettings = AppSettings.shared
     @StateObject private var draft: ApplicationAudioEffectDraft
-    @StateObject private var presentation = ApplicationAudioEffectPresentation()
+    @StateObject private var presentation: ApplicationAudioEffectPresentation
 
     init(model: AppModel, applicationID: String,
-         appName: String, applicationURL: URL?) {
+         appName: String, applicationURL: URL?,
+         initialPage: ApplicationAudioEffectPage = .equalizer) {
         self.model = model
         self.applicationID = applicationID
         self.appName = appName
@@ -23,6 +30,9 @@ struct ApplicationAudioEffectView: View {
                 model.applicationAudioEffect(for: applicationID)
             )
         )
+        let presentation = ApplicationAudioEffectPresentation()
+        presentation.page = initialPage
+        _presentation = StateObject(wrappedValue: presentation)
     }
 
     private var language: AppLanguage {
@@ -31,32 +41,48 @@ struct ApplicationAudioEffectView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // 曲线与推子共同吃掉剩余高度；出现提示或错误时自动缩短两块，而不是留下固定底部空白。
-            let heights = EqualizerLayoutMetrics.flexibleHeights(
-                in: geometry.size.height,
-                hasNotice: !model.applicationEffectsEnabled,
-                hasError: model.operationError != nil
-            )
+            let hasNotice = !model.applicationEffectsEnabled
+            let hasError = model.operationError != nil
             VStack(alignment: .leading, spacing: EqualizerLayoutMetrics.spacing) {
                 header
                     .frame(height: EqualizerLayoutMetrics.headerHeight, alignment: .leading)
-                presetToolbar
-                    .frame(height: EqualizerLayoutMetrics.toolbarHeight, alignment: .leading)
-                if !model.applicationEffectsEnabled {
+                pageTabs
+                    .frame(height: EqualizerLayoutMetrics.pageTabHeight, alignment: .leading)
+                if hasNotice {
                     totalSwitchNotice
                         .frame(height: EqualizerLayoutMetrics.noticeHeight, alignment: .leading)
                 }
-                EqualizerResponsePreview(
-                    eq: draft.settings.eq,
-                    enabled: draft.settings.enabled,
-                    language: language
-                )
-                .frame(height: heights.curve)
-                EqualizerFaderBank(eq: draft.settings.eq,
-                                   language: language,
-                                   onPreview: previewGain,
-                                   onCommit: commitGain)
-                    .frame(height: heights.fader)
+                if presentation.page == .equalizer {
+                    // 曲线与推子共同吃掉剩余高度；出现提示或错误时自动缩短两块。
+                    let heights = EqualizerLayoutMetrics.flexibleHeights(
+                        in: geometry.size.height,
+                        hasNotice: hasNotice,
+                        hasError: hasError
+                    )
+                    presetToolbar
+                        .frame(height: EqualizerLayoutMetrics.toolbarHeight, alignment: .leading)
+                    EqualizerResponsePreview(
+                        eq: draft.settings.eq,
+                        enabled: draft.settings.enabled,
+                        language: language
+                    )
+                    .frame(height: heights.curve)
+                    EqualizerFaderBank(eq: draft.settings.eq,
+                                       language: language,
+                                       onPreview: previewGain,
+                                       onCommit: commitGain)
+                        .frame(height: heights.fader)
+                } else {
+                    SpatialEffectPage(
+                        appName: appName,
+                        settings: draft.settings.spatial,
+                        language: language,
+                        onPreviewIntensity: previewSpatialIntensity,
+                        onCommitIntensity: commitSpatialIntensity,
+                        onModeChange: commitSpatialMode
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 if let error = model.operationError {
                     PanelError(text: L10n.text(error, language: language))
                         .lineLimit(2)
@@ -129,6 +155,21 @@ struct ApplicationAudioEffectView: View {
                 .frame(width: 112)
                 .accessibilityLabel(L10n.text("启用应用音效", language: language))
         }
+    }
+
+    private var pageTabs: some View {
+        PanelTabs(
+            items: ApplicationAudioEffectPage.allCases,
+            selection: presentation.page,
+            title: { page in
+                switch page {
+                case .equalizer: return L10n.text("均衡器", language: language)
+                case .spatial: return L10n.text("空间", language: language)
+                }
+            },
+            select: { presentation.page = $0 }
+        )
+        .frame(maxWidth: .infinity)
     }
 
     private var presetToolbar: some View {
@@ -316,6 +357,25 @@ struct ApplicationAudioEffectView: View {
         draft.settings = model.applicationAudioEffect(for: applicationID)
     }
 
+    /// 拖动混响强度时只更新实时原子参数，松手后再写入同一份逐 App 设置。
+    private func previewSpatialIntensity(_ value: Float) {
+        var next = draft.settings
+        next.spatial.setIntensity(value)
+        draft.settings = next
+        model.previewApplicationAudioEffect(next, for: applicationID)
+    }
+
+    private func commitSpatialIntensity() {
+        commit(draft.settings)
+    }
+
+    /// 空间模式不属于 EQ 预设；切换模式不会改变当前均衡器或自定义预设引用。
+    private func commitSpatialMode(_ mode: AppAudioSpatialMode) {
+        var next = draft.settings
+        next.spatial.mode = mode
+        commit(next)
+    }
+
     private func presetTitle(_ preset: AppAudioEffectPreset) -> String {
         switch preset {
         case .flat: return L10n.text("平坦", language: language)
@@ -336,9 +396,86 @@ struct ApplicationAudioEffectView: View {
     }
 }
 
+/// 空间页只呈现模式与混响强度，不混入 EQ 预设和频段控件。
+private struct SpatialEffectPage: View {
+    let appName: String
+    let settings: AppAudioSpatialSettings
+    let language: AppLanguage
+    let onPreviewIntensity: (Float) -> Void
+    let onCommitIntensity: () -> Void
+    let onModeChange: (AppAudioSpatialMode) -> Void
+
+    private var duration: String {
+        "\(Int((settings.intensity * 100).rounded()))%"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 10) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(PanelStyle.accent)
+                    .frame(width: 30, height: 30)
+                    .background(PanelStyle.iconSurface, in: RoundedRectangle(cornerRadius: 8))
+                Text(L10n.text("空间效果", language: language))
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+
+            PanelSegmentedControl(
+                items: AppAudioSpatialMode.allCases,
+                selection: Binding(
+                    get: { settings.mode },
+                    set: onModeChange
+                ),
+                title: modeTitle
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(L10n.text("混响强度", language: language))
+                        .font(PanelStyle.bodyFont)
+                        .foregroundStyle(PanelStyle.ink)
+                    Spacer(minLength: 16)
+                    Text(duration)
+                        .font(PanelStyle.bodyFont.monospacedDigit())
+                        .foregroundStyle(PanelStyle.secondary)
+                        .frame(width: PanelStyle.percentageWidth, alignment: .trailing)
+                }
+                PanelVolumeSlider(
+                    value: Binding(
+                        get: { Double(settings.intensity) },
+                        set: { onPreviewIntensity(Float($0)) }
+                    ),
+                    label: L10n.text("混响强度", language: language),
+                    accessibilityValueText: duration,
+                    onEditingChanged: { editing in
+                        if !editing { onCommitIntensity() }
+                    }
+                )
+                .disabled(!settings.mode.isEnabled)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func modeTitle(_ mode: AppAudioSpatialMode) -> String {
+        switch mode {
+        case .off: return L10n.text("关闭", language: language)
+        case .room: return L10n.text("房间", language: language)
+        case .hall: return L10n.text("大厅", language: language)
+        case .vocalSpace: return L10n.text("人声空间", language: language)
+        }
+    }
+}
+
 /// CLT 当前工具链缺少 SwiftUI 的 @State 宏插件，因此弹窗与文本输入统一沿用 ObservableObject。
 @MainActor
 private final class ApplicationAudioEffectPresentation: ObservableObject {
+    @Published var page: ApplicationAudioEffectPage = .equalizer
     @Published var showingSavePreset = false
     @Published var showingRenamePreset = false
     @Published var showingDeletePreset = false
@@ -692,6 +829,7 @@ enum EqualizerLayoutMetrics {
     static let padding: CGFloat = 16
     static let spacing: CGFloat = 10
     static let headerHeight: CGFloat = 30
+    static let pageTabHeight: CGFloat = 27
     static let toolbarHeight: CGFloat = 26
     static let noticeHeight: CGFloat = 18
     static let errorHeight: CGFloat = 30
@@ -702,11 +840,11 @@ enum EqualizerLayoutMetrics {
     private static let curveShare: CGFloat = 0.42
 
     static func rowCount(hasNotice: Bool, hasError: Bool) -> Int {
-        4 + (hasNotice ? 1 : 0) + (hasError ? 1 : 0)
+        5 + (hasNotice ? 1 : 0) + (hasError ? 1 : 0)
     }
 
     static func fixedHeight(hasNotice: Bool, hasError: Bool) -> CGFloat {
-        headerHeight + toolbarHeight
+        headerHeight + pageTabHeight + toolbarHeight
             + (hasNotice ? noticeHeight : 0)
             + (hasError ? errorHeight : 0)
     }
