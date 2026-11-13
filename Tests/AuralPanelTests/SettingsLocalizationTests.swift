@@ -33,8 +33,8 @@ struct SettingsLocalizationTests {
         let renderedText = (request.results ?? []).compactMap {
             $0.topCandidates(1).first?.string
         }
-        // 当前设置页有四组布尔控件；至少全部出现一次，才能证明语言环境确实传到了子视图。
-        #expect(renderedText.filter { $0 == "Off" }.count >= 4)
-        #expect(renderedText.filter { $0 == "On" }.count >= 4)
+        // 当前设置页有三组布尔控件；至少全部出现一次，才能证明语言环境确实传到了子视图。
+        #expect(renderedText.filter { $0 == "Off" }.count >= 3)
+        #expect(renderedText.filter { $0 == "On" }.count >= 3)
     }
 }

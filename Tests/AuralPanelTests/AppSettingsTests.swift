@@ -17,7 +17,7 @@ struct AppSettingsTests {
 
         #expect(!settings.showHeadphoneControls)
         #expect(!settings.showSimultaneousOutput)
-        #expect(!settings.showCurrentDeviceBattery)
+        #expect(settings.menuBarBatterySource == .off)
     }
 
     @Test func settingsPersistAcrossInstances() throws {
@@ -31,14 +31,14 @@ struct AppSettingsTests {
         settings.appearance = .dark
         settings.showHeadphoneControls = false
         settings.showSimultaneousOutput = false
-        settings.showCurrentDeviceBattery = true
+        settings.menuBarBatterySource = .pinned(deviceUID: "Bluetooth:AA-BB-CC-DD-EE-01")
 
         let restored = AppSettings(defaults: defaults)
         #expect(restored.language == .english)
         #expect(restored.appearance == .dark)
         #expect(!restored.showHeadphoneControls)
         #expect(!restored.showSimultaneousOutput)
-        #expect(restored.showCurrentDeviceBattery)
+        #expect(restored.menuBarBatterySource == .pinned(deviceUID: "Bluetooth:AA-BB-CC-DD-EE-01"))
     }
 
     @Test(arguments: ["zh-Hans", "zh-Hant", "en-US", "ja-JP"])
@@ -63,7 +63,11 @@ struct AppSettingsTests {
         #expect(L10n.text("多设备输出", language: .english) == "Multi-Device Output")
         #expect(L10n.format("多设备输出 · %d 台", language: .english, arguments: [2])
                 == "Multi-Device Output · 2 Devices")
-        #expect(L10n.text("显示当前设备剩余电量", language: .english) == "Show Device Battery")
+        #expect(L10n.text("菜单栏电量", language: .english) == "Menu Bar Battery")
+        #expect(L10n.text("跟随当前输出", language: .english) == "Follow Current Output")
+        #expect(L10n.text("不显示", language: .english) == "Don't Show")
+        #expect(L10n.format("固定：%@", language: .english, arguments: ["AirPods"])
+                == "Pinned: AirPods")
         #expect(L10n.text("检查更新…", language: .english) == "Check for Updates…")
         #expect(L10n.text("未发现新版本", language: .english) == "No Updates Available")
         #expect(L10n.text("开启", language: .english) == "On")
@@ -118,13 +122,30 @@ struct AppSettingsTests {
             "登录 Mac 后自动运行 Aural。",
             "关闭后，耳机控制从主面板隐藏。",
             "关闭后，多设备输出功能从输出面板隐藏。",
-            "在菜单栏 Aural 图标右侧显示当前设备电量。"
+            "固定设备断开后隐藏。"
         ]
         for key in keys {
             let text = L10n.text(key, language: .english)
             let width = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width
             #expect(width <= availableWidth)
         }
+    }
+
+    @Test func legacyBooleanBatterySettingMigratesExplicitly() throws {
+        let suite = "Aural.AppSettingsBatteryMigration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(true, forKey: "local.aural.settings.showCurrentDeviceBattery")
+        let enabled = AppSettings(defaults: defaults)
+        #expect(enabled.menuBarBatterySource == .currentOutput)
+        #expect(defaults.string(forKey: "local.aural.settings.menuBarBatterySource") == "currentOutput")
+
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(false, forKey: "local.aural.settings.showCurrentDeviceBattery")
+        let disabled = AppSettings(defaults: defaults)
+        #expect(disabled.menuBarBatterySource == .off)
     }
 
     @Test @MainActor func segmentedAndBooleanControlsKeepNeutralUnselectedText() throws {
@@ -162,16 +183,23 @@ struct AppSettingsTests {
 
         let settings = AppSettings(defaults: defaults)
         let model = AppModel(startsMonitoring: false)
+        // 截图使用有内容的“跟随当前输出”，同时覆盖最长默认选项在固定宽度内的布局。
+        settings.menuBarBatterySource = .currentOutput
         for appearance in [AppAppearance.light, .dark] {
             settings.appearance = appearance
-            let renderer = ImageRenderer(content:
+            let host = NSHostingView(rootView:
                 SettingsView(model: model, settings: settings)
                     .background(PanelStyle.canvas)
                     .preferredColorScheme(settings.appearance.colorScheme)
             )
-            let image = try #require(renderer.nsImage)
-            #expect(image.size == SettingsMetrics.size)
-            let bitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            host.appearance = appearance.nsAppearance
+            host.frame = NSRect(origin: .zero, size: SettingsMetrics.size)
+            PanelTestSupport.flushLayout(host)
+            #expect(host.frame.size == SettingsMetrics.size)
+
+            // NSViewRepresentable 的原生菜单按钮必须经真实 AppKit 宿主绘制；ImageRenderer 会显示禁止符号。
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
             let png = try #require(bitmap.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: "/tmp/aural-settings-\(appearance.rawValue).png"))
         }

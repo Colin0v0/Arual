@@ -66,8 +66,6 @@ public final class HeadphoneControllerGroup: ObservableObject {
         if entries.map(\.id) != retained.map(\.id) { entries = retained }
     }
 
-    /// 菜单栏的单值电量仅在唯一耳机时显示，多副时在各自卡片里显示，避免冒充某个手选目标。
-    public var battery: Int? { entries.count == 1 ? entries[0].controller.state.battery : nil }
     public var diagnosticLines: [String] {
         entries.flatMap { entry in
             let lines = entry.controller.diagnosticLines

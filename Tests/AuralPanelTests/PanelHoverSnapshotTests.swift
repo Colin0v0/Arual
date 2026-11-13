@@ -54,8 +54,8 @@ struct PanelHoverSnapshotTests {
                                   isOn: .constant(true))
             }
             SettingsCard(title: "功能") {
-                SettingsToggleRow(title: "显示当前设备剩余电量",
-                                  detail: "在菜单栏 Aural 图标右侧显示当前设备电量。",
+                SettingsToggleRow(title: "菜单栏电量",
+                                  detail: "固定设备断开后隐藏。",
                                   isOn: .constant(true))
             }
         }

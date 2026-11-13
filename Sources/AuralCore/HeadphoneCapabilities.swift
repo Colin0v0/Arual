@@ -339,10 +339,58 @@ public enum HeadphoneModelCatalog {
             family: .oppo,
             displayName: "OPPO Enco Air5s",
             compatibility: .upstreamVerified,
-            battery: .single,
+            battery: .earbudsWithCase,
             noiseModes: [.off, .cancellation, .transparency],
             matchTerms: ["oppoencoair5s"]
         ),
+
+        // bosectl 已在 wolverine/0x4082 真机确认 BMAP 产品识别、电量和 AudioModes。
+        // Aural 仍需在独立 macOS 环境复验，因此不使用 verified。
+        HeadphoneModelProfile(
+            id: "bose-quietcomfort-ultra-headphones-2",
+            family: .bose,
+            displayName: "Bose QuietComfort Ultra Headphones (2nd Gen)",
+            compatibility: .upstreamVerified,
+            battery: .single,
+            noiseModes: [.cancellation, .transparency],
+            matchTerms: [
+                "boseqcultraheadphones",
+                "bosequietcomfortultraheadphones",
+                "boseqcultraheadphones2",
+                "qcultraheadphones",
+                "quietcomfortultraheadphones",
+                "quietcomfortultra2"
+            ]
+        ),
+        HeadphoneModelProfile(
+            id: "bose-quietcomfort-headphones", family: .bose,
+            displayName: "Bose QuietComfort Headphones", compatibility: .upstreamVerified,
+            battery: .single, noiseModes: [.cancellation, .transparency],
+            matchTerms: ["quietcomfortheadphones", "boseqcheadphones"]
+        ),
+        HeadphoneModelProfile(
+            id: "bose-quietcomfort-45", family: .bose,
+            displayName: "Bose QuietComfort 45", compatibility: .experimental,
+            battery: .single, noiseModes: [.cancellation, .transparency],
+            matchTerms: ["quietcomfort45", "qc45"]
+        ),
+        HeadphoneModelProfile(
+            id: "sennheiser-accentum-wireless", family: .sennheiser,
+            displayName: "Sennheiser ACCENTUM Wireless", compatibility: .upstreamVerified,
+            battery: .single, noiseModes: [.off, .cancellation, .transparency],
+            // 型号 profile 本身也只匹配头戴基础款，不能把 Plus / TW 的名称命中共用。
+            matchTerms: ["accentumwireless"]
+        ),
+        // edith/0x4062 与头戴二代共享 Quiet/Aware，但电量必须保留左、右、盒各部件。
+        HeadphoneModelProfile(
+            id: "bose-quietcomfort-ultra-earbuds-2",
+            family: .bose,
+            displayName: "Bose QuietComfort Ultra Earbuds (2nd Gen)",
+            compatibility: .upstreamVerified,
+            battery: .earbudsWithCase,
+            noiseModes: [.cancellation, .transparency],
+            matchTerms: ["qcultraearbuds", "quietcomfortultraearbuds"]
+        )
     ]
 
     /// 型号名可能互相包含，因此选择匹配词最长的 profile。

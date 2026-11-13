@@ -3,19 +3,17 @@ import CoreAudio
 import Foundation
 
 public struct HeadphoneReadings: Equatable {
-    public var battery: Int?
-    public var isCharging: Bool?
-    public var appleBattery: AppleHeadphoneBattery?
+    public var battery: HeadphoneBatteryReading?
     public var noiseMode: NoiseMode?
-    public init(battery: Int? = nil, noiseMode: NoiseMode? = nil, isCharging: Bool? = nil) {
+    public init(battery: HeadphoneBatteryReading? = nil, noiseMode: NoiseMode? = nil) {
         self.battery = battery
-        self.isCharging = isCharging
         self.noiseMode = noiseMode
     }
 }
 
 /// 统一界面状态，不把厂商协议混成一套“通用指令”。
-/// B&W 走 BLE RPC；Sony MDR V1/V2 与 OPPO Enco 分别使用已确认的 RFCOMM 服务。
+/// B&W 走 BLE RPC；Sony MDR、OPPO Enco、Bose BMAP 与 Sennheiser GAIA
+/// 分别使用各自确认的经典蓝牙控制服务。
 @MainActor
 public final class HeadphoneController: ObservableObject {
     @Published public private(set) var phase: HeadphonePhase = .idle
@@ -37,15 +35,25 @@ public final class HeadphoneController: ObservableObject {
     public private(set) var boundOutputUID: String?
 
     @Published public private(set) var appleWearState: AppleHeadphoneWearState = .unknown
-    public var showsNoiseControls: Bool { family != .apple || appleWearState == .bothEars }
+    public var showsNoiseControls: Bool { family != .apple || appleWearState.allowsModeControl }
 
     private let appleHardware: AppleHeadphoneHardware
     private let bowersWilkins = BowersWilkinsController()
     private let sony = SonyV1Client()
     private let oppo = OppoRFCOMMTransport()
+    private let bose: any BoseControlTransport
+    private let sennheiser: SennheiserClient
+    private let validateClassicTarget: (String) throws -> Void
     private var oppoParser = OppoFrameParser()
     private var oppoProfile: OppoModelProfile?
     private var oppoProductReceived = false
+    private var boseDecoder = BoseBMAPDecoder()
+    private var boseModel: BoseBMAPModel?
+    private var boseConnectionModel: BoseBMAPModel?
+    private var boseInitializationPending = false
+    private var boseModePollTask: Task<Void, Never>?
+    private var boseCurrentModeReceived = false
+    private var boseSwitchVerificationPending = false
     private var noiseReadback = NoiseReadbackGate()
     private var sequence: UInt8 = 1
     private var output: AudioOutput?
@@ -66,8 +74,25 @@ public final class HeadphoneController: ObservableObject {
 
     public convenience init() { self.init(appleHardware: .live) }
 
-    public init(appleHardware: AppleHeadphoneHardware) {
+    public convenience init(appleHardware: AppleHeadphoneHardware) {
+        self.init(appleHardware: appleHardware, boseTransport: BoseRFCOMMTransport(),
+                  validateClassicTarget: HeadphoneConnectionGuard.check)
+    }
+
+    /// 只注入边界用于测试，不增加运行时协议替代或忽略身份检查的路径。
+    convenience init(appleHardware: AppleHeadphoneHardware, boseTransport: any BoseControlTransport,
+                     validateClassicTarget: @escaping (String) throws -> Void) {
+        self.init(appleHardware: appleHardware, boseTransport: boseTransport,
+                  sennheiserTransport: SennheiserRFCOMMTransport(), validateClassicTarget: validateClassicTarget)
+    }
+
+    init(appleHardware: AppleHeadphoneHardware, boseTransport: any BoseControlTransport,
+         sennheiserTransport: any SennheiserControlTransport,
+         validateClassicTarget: @escaping (String) throws -> Void) {
+        self.sennheiser = SennheiserClient(transport: sennheiserTransport)
         self.appleHardware = appleHardware
+        self.bose = boseTransport
+        self.validateClassicTarget = validateClassicTarget
         // 上游 ObservableObject 在属性赋值前通知，下一轮主循环再读取整份状态。
         bowersWilkins.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in
             self?.copyBowersWilkinsState()
@@ -83,6 +108,14 @@ public final class HeadphoneController: ObservableObject {
         sony.onTransportLog = { [weak self] direction, text in self?.trace("\(direction.rawValue) \(text)") }
         oppo.onStatusChange = { [weak self] in self?.oppoConnectionChanged($0) }
         oppo.onData = { [weak self] in self?.receiveOppo($0) }
+        bose.onStatusChange = { [weak self] in self?.boseConnectionChanged($0) }
+        bose.onData = { [weak self] in self?.receiveBose($0) }
+        sennheiser.onConnectionChange = { [weak self] in self?.sennheiserConnectionChanged($0) }
+        sennheiser.onStateChange = { [weak self] in self?.sennheiserReadingsChanged($0) }
+        sennheiser.onNoiseWriteSent = { [weak self] in self?.noiseReadback.didSendWrite() }
+        sennheiser.onNoiseVerificationSent = { [weak self] in self?.noiseReadback.didSendVerification() }
+        sennheiser.onNoiseConfirmed = { [weak self] in self?.confirmNoiseReadback($0) }
+        sennheiser.onLog = { [weak self] in self?.trace($0) }
     }
 
     public func updateOutput(_ newOutput: AudioOutput?) {
@@ -112,15 +145,19 @@ public final class HeadphoneController: ObservableObject {
             clearCapabilities()
         } else {
             // 同一副耳机的 HAL ID/名称可随通话模式变化。Apple 必须废弃旧 HAL 写任务；
-            // B&W/Sony/OPPO 的物理控制连接绑定 UID，更新音频句柄即可，不无故断开 BLE/RFCOMM。
+            // B&W/Sony/OPPO/Bose/Sennheiser 的物理控制连接绑定 UID，
+            // 更新音频句柄即可，不无故断开 BLE/RFCOMM。
             output = target
             let name = target?.name ?? "耳机"
             if displayName != name {
                 displayName = name
-                modelProfile = if let target, let family {
-                    HeadphoneModelCatalog.profile(for: target.name, family: family)
-                } else {
-                    nil
+                // Bose 已由产品 ID 核验的 profile 不能被同一设备的改名覆盖。
+                if boseModel == nil && !sennheiser.isIdentified {
+                    modelProfile = if let target, let family {
+                        HeadphoneModelCatalog.profile(for: target.name, family: family)
+                    } else {
+                        nil
+                    }
                 }
             }
         }
@@ -251,7 +288,11 @@ public final class HeadphoneController: ObservableObject {
         switch family {
         case .bowersWilkins: bowersWilkins.refresh()
         case .sony: sony.refresh()
+        case .sennheiser: sennheiser.refresh()
         case .oppo: sendOppo(.battery); sendOppo(.noiseControl, [0x01, 0x01])
+        case .bose:
+            guard sendBose(BoseBMAPProtocol.queryBattery(), label: "battery") else { return }
+            sendBose(BoseBMAPProtocol.queryCurrentMode(), label: "current mode")
         case .apple: refreshApple()
         case nil: break
         }
@@ -288,6 +329,24 @@ public final class HeadphoneController: ObservableObject {
             noiseReadback.didSendWrite()
             guard sendOppo(.noiseControl, [0x01, 0x01]) else { return }
             noiseReadback.didSendVerification()
+        case .bose:
+            guard let index = BoseBMAPProtocol.modeIndex(for: mode) else {
+                failClassic("该 Bose 型号没有经过确认的噪声模式映射")
+                return
+            }
+            guard sendBose(BoseBMAPProtocol.switchMode(index: index), label: "switch mode \(index)") else {
+                return
+            }
+            noiseReadback.didSendWrite()
+            // START 只代表命令已发出。等耳机返回 RESULT 后再 GET 当前模式，
+            // 避免异步固件尚未应用新模式时把旧回包误当成确认结果。
+            boseSwitchVerificationPending = true
+        case .sennheiser:
+            guard sennheiser.setNoiseMode(mode) else {
+                // 正在刷新时没有排队写入，不把一次未发送的请求留在忙碌状态。
+                pendingNoiseMode = nil; noiseReadback.clear(); busy = false
+                return
+            }
         case .apple:
             writeAppleNoiseMode(mode)
             return
@@ -323,7 +382,13 @@ public final class HeadphoneController: ObservableObject {
             return
         }
         phase = bowersWilkins.phase
-        state = HeadphoneReadings(battery: bowersWilkins.state.battery, noiseMode: bowersWilkins.state.noiseMode, isCharging: bowersWilkins.state.isCharging)
+        let batteryReading: HeadphoneBatteryReading? = if bowersWilkins.state.battery != nil || bowersWilkins.state.isCharging != nil {
+            HeadphoneBatteryReading(single: bowersWilkins.state.battery,
+                                    isCharging: bowersWilkins.state.isCharging)
+        } else {
+            nil
+        }
+        state = HeadphoneReadings(battery: batteryReading, noiseMode: bowersWilkins.state.noiseMode)
         candidates = bowersWilkins.candidates
         busy = bowersWilkins.busy
         identityVerified = bowersWilkins.identityVerified
@@ -335,7 +400,7 @@ public final class HeadphoneController: ObservableObject {
             protocolModes: [.off, .cancellation, .transparency]
         )
         updateCapabilities(
-            battery: state.battery == nil ? nil : batteryCapabilityForDriver,
+            battery: state.battery?.hasLevel == true ? batteryCapabilityForDriver : nil,
             noise: state.noiseMode.map {
                 HeadphoneNoiseCapability(modes: noiseModes, currentMode: $0)
             }
@@ -365,14 +430,23 @@ public final class HeadphoneController: ObservableObject {
         var readings = HeadphoneReadings(noiseMode: snapshot.noiseMode)
         do {
             let battery = try appleHardware.battery(output)
-            readings.appleBattery = battery
-            readings.battery = battery?.earbudLevel
+            readings.battery = battery.map {
+                HeadphoneBatteryReading(single: $0.main, left: $0.left, right: $0.right,
+                                        caseLevel: $0.caseLevel)
+            }
         } catch {
             trace("APPLE BATTERY ERROR \(error.localizedDescription)")
         }
         state = readings
         updateCapabilities(
-            battery: readings.battery == nil ? nil : .earbudsWithCase,
+            battery: readings.battery.map { battery in
+                // 实际回包只有整机电量时，诊断和设置页也按单值能力显示。
+                if battery.single != nil, battery.left == nil, battery.right == nil,
+                   battery.caseLevel == nil {
+                    return .single
+                }
+                return .earbudsWithCase
+            },
             noise: HeadphoneNoiseCapability(
                 modes: snapshot.supportedNoiseModes,
                 currentMode: snapshot.noiseMode
@@ -400,7 +474,7 @@ public final class HeadphoneController: ObservableObject {
                     try await self.appleHardware.waitForReadback()
                     try self.checkAppleAuthorization(output: output, generation: generation)
                     let snapshot = try self.appleHardware.snapshot(output.id)
-                    if snapshot.wearState != .bothEars {
+                    if !snapshot.wearState.allowsModeControl {
                         self.cancelAppleOperation()
                         self.acceptAppleSnapshot(snapshot, output: output)
                         return
@@ -433,7 +507,7 @@ public final class HeadphoneController: ObservableObject {
                     do {
                         try self.checkAppleAuthorization(output: output, generation: generation)
                         let snapshot = try self.appleHardware.snapshot(output.id)
-                        if snapshot.wearState != .bothEars {
+                        if !snapshot.wearState.allowsModeControl {
                             self.cancelAppleOperation()
                             self.acceptAppleSnapshot(snapshot, output: output)
                             return
@@ -489,9 +563,10 @@ public final class HeadphoneController: ObservableObject {
     }
 
     private func beginClassicConnection() {
-        guard !suspended, !shuttingDown, let output, family == .sony || family == .oppo else { return }
+        guard !suspended, !shuttingDown, let output,
+              family == .sony || family == .oppo || family == .bose || family == .sennheiser else { return }
         do {
-            try HeadphoneConnectionGuard.check(output.uid)
+            try validateClassicTarget(output.uid)
             guard let address = HeadphonePhysicalIdentity.addressInOutputUID(output.uid) else {
                 throw AudioFailure("系统输出没有可验证的蓝牙硬件地址")
             }
@@ -507,7 +582,16 @@ public final class HeadphoneController: ObservableObject {
             clearCapabilities()
             trace("CONNECT \(family!.rawValue) FROM CORE AUDIO ADDRESS")
             if family == .sony { sony.connect(address: bytes.joined(separator: ":"), deviceName: output.name, outputUID: output.uid) }
-            else { oppo.connect(address: bytes.joined(separator: ":"), outputUID: output.uid) }
+            else if family == .oppo { oppo.connect(address: bytes.joined(separator: ":"), outputUID: output.uid) }
+            else if family == .sennheiser {
+                sennheiser.connect(address: bytes.joined(separator: ":"), outputUID: output.uid)
+            } else {
+                guard let candidate = BoseBMAPModel.allCases.first(where: { $0.catalogID == modelProfile?.id }) else {
+                    throw AudioFailure("Bose 型号尚未登记控制端点")
+                }
+                boseConnectionModel = candidate
+                bose.connect(address: bytes.joined(separator: ":"), outputUID: output.uid, endpoint: candidate.endpoint)
+            }
         } catch { failClassic(error.localizedDescription) }
     }
 
@@ -517,9 +601,18 @@ public final class HeadphoneController: ObservableObject {
         cancelReconnect()
         sony.disconnect()
         oppo.disconnect()
+        bose.disconnect()
+        sennheiser.disconnect()
         oppoParser.reset()
         oppoProfile = nil
         oppoProductReceived = false
+        boseDecoder.reset()
+        boseModel = nil
+        boseConnectionModel = nil
+        boseInitializationPending = false
+        boseModePollTask?.cancel(); boseModePollTask = nil
+        boseCurrentModeReceived = false
+        boseSwitchVerificationPending = false
         sequence = 1
         state = HeadphoneReadings()
         candidates = []
@@ -573,7 +666,11 @@ public final class HeadphoneController: ObservableObject {
 
     private func sonyReadingsChanged(_ reading: SonyV1State) {
         guard family == .sony, !stopping else { return }
-        state.battery = reading.batteryPercent
+        state.battery = if reading.batteryPercent != nil || reading.isCharging != nil {
+            HeadphoneBatteryReading(single: reading.batteryPercent, isCharging: reading.isCharging)
+        } else {
+            nil
+        }
         var noise: HeadphoneNoiseCapability?
         if let mode = reading.noiseMode {
             let actual = Self.noiseMode(from: mode)
@@ -631,7 +728,9 @@ public final class HeadphoneController: ObservableObject {
                     oppoProfile = OppoModelProfile.profile(for: product)
                 }
             case 0x8106:
-                if let battery = OppoBatteryCodec.decode(message.payload) { state.battery = battery.lowestEarbudLevel }
+                if let battery = OppoBatteryCodec.decode(message.payload) {
+                    state.battery = battery.batteryReading
+                }
             case 0x810C:
                 if let mode = OppoNoiseCodec.decodeReport(message.payload), oppoProfile != nil {
                     state.noiseMode = mode
@@ -640,7 +739,8 @@ public final class HeadphoneController: ObservableObject {
             default:
                 if let event = OppoEventCodec.decode(message) {
                     switch event {
-                    case .battery(let reading): state.battery = reading.lowestEarbudLevel
+                    case .battery(let reading):
+                        state.battery = reading.batteryReading
                     case .noiseMode(let mode):
                         if oppoProfile != nil { state.noiseMode = mode; confirmNoiseReadback(mode) }
                     }
@@ -658,7 +758,7 @@ public final class HeadphoneController: ObservableObject {
                 []
             }
             updateCapabilities(
-                battery: state.battery == nil ? nil : batteryCapabilityForDriver,
+                battery: state.battery?.hasLevel == true ? batteryCapabilityForDriver : nil,
                 noise: state.noiseMode.flatMap { currentMode in
                     guard !oppoNoiseModes.isEmpty else { return nil }
                     return HeadphoneNoiseCapability(modes: oppoNoiseModes, currentMode: currentMode)
@@ -667,11 +767,189 @@ public final class HeadphoneController: ObservableObject {
         }
     }
 
+    private func sennheiserConnectionChanged(_ status: SennheiserRFCOMMStatus) {
+        guard family == .sennheiser, !stopping else { return }
+        switch status {
+        case .idle: phase = .idle
+        case .connecting: phase = .connecting
+        case .connected:
+            // Client 只有真实身份与两项开关均已读取时才回报就绪。
+            phase = .ready; identityVerified = true
+            modelProfile = HeadphoneModelCatalog.profiles.first { $0.id == "sennheiser-accentum-wireless" }
+            classicPolicy.confirmedConnection()
+        case .failed(let message, let retryable): failClassic(message, retryable: retryable)
+        }
+    }
+
+    private func sennheiserReadingsChanged(_ reading: SennheiserReadings) {
+        guard family == .sennheiser, !stopping, sennheiser.isIdentified else { return }
+        state = HeadphoneReadings(battery: reading.battery.map { HeadphoneBatteryReading(single: $0) },
+                                  noiseMode: reading.noiseMode)
+        updateCapabilities(battery: reading.battery == nil ? nil : .single,
+                           noise: reading.noiseMode.map {
+            HeadphoneNoiseCapability(modes: [.off, .cancellation, .transparency], currentMode: $0)
+        })
+    }
+
+    private func boseConnectionChanged(_ status: BoseRFCOMMStatus) {
+        guard family == .bose, !stopping else { return }
+        switch status {
+        case .idle:
+            phase = .idle
+        case .connecting:
+            phase = .connecting
+        case .connected:
+            phase = .verifying
+            boseDecoder.reset()
+            boseModel = nil
+            boseCurrentModeReceived = false
+            boseSwitchVerificationPending = false
+            // 通道打开不等于型号已确认；先只查询产品身份，不能把其他型号的
+            // 自发回包当成本型号能力，也不提前向未知型号发送功能命令。
+            guard let candidate = boseConnectionModel else { failClassic("Bose 控制端点尚未确认"); return }
+            boseInitializationPending = candidate.requiresInitialization
+            let initial = candidate.requiresInitialization
+                ? BoseBMAPProtocol.initializeLegacyProduct() : BoseBMAPProtocol.queryProductIdentity()
+            guard sendBose(initial, label: "initial identity query") else { return }
+            armDeadline(seconds: 8) { $0.failClassic("Bose 初始读取超时", retryable: true) }
+        case .failed(let message, let retryable):
+            failClassic(message, retryable: retryable)
+        }
+    }
+
+    private func receiveBose(_ data: Data) {
+        guard family == .bose, !stopping, !suspended, !shuttingDown,
+              phase == .verifying || phase == .ready else { return }
+        let frames: [BoseBMAPFrame]
+        do { frames = try boseDecoder.append(data) }
+        catch { failClassic(error.localizedDescription); return }
+        for frame in frames {
+            trace(String(format: "RX BOSE [%d.%d] op=%d [%dB]",
+                         frame.functionBlock, frame.function,
+                         frame.operation?.rawValue ?? 0, frame.payload.count))
+            if frame.operation == .error {
+                let payload = [UInt8](frame.payload).map { String(format: "%02X", $0) }.joined(separator: " ")
+                failClassic("Bose 返回错误 \(payload)", retryable: false)
+                return
+            }
+
+            if boseInitializationPending {
+                if BoseBMAPProtocol.isStatus(frame, block: 0, function: 1) {
+                    boseInitializationPending = false
+                    guard sendBose(BoseBMAPProtocol.queryProductIdentity(), label: "product identity") else { return }
+                }
+                continue
+            }
+
+            if boseSwitchVerificationPending, let boseModel,
+               BoseBMAPProtocol.isModeSwitchAcknowledgement(frame, model: boseModel) {
+                boseSwitchVerificationPending = false
+                guard sendBose(BoseBMAPProtocol.queryCurrentMode(), label: "verify mode") else {
+                    return
+                }
+                noiseReadback.didSendVerification()
+                if frame.operation == .processing { startBoseModePolling() }
+            }
+
+            if let productID = BoseBMAPProtocol.parseProductID(frame) {
+                guard let model = BoseBMAPModel(rawValue: productID) else {
+                    failClassic(String(format: "当前 Bose 产品 ID 0x%04X 尚未通过协议验收", productID))
+                    return
+                }
+                guard let candidate = boseConnectionModel, candidate.endpoint == model.endpoint,
+                      candidate.requiresInitialization == model.requiresInitialization else {
+                    failClassic("Bose 产品身份与已选择的控制端点不匹配")
+                    return
+                }
+                if let boseModel, boseModel != model {
+                    // 同一条控制连接不允许中途换产品，必须重新连接并核验身份。
+                    failClassic("Bose 产品身份在控制连接期间发生变化")
+                    return
+                }
+                if boseModel == nil {
+                    guard let profile = HeadphoneModelCatalog.profiles.first(where: { $0.id == model.catalogID }) else {
+                        failClassic("Bose 型号能力表不完整")
+                        return
+                    }
+                    boseModel = model
+                    // 名称只是连接候选；诊断和能力表最终必须跟随真实 Product ID。
+                    modelProfile = profile
+                    guard sendBose(BoseBMAPProtocol.queryBattery(), label: "battery"),
+                          sendBose(BoseBMAPProtocol.queryCurrentMode(), label: "current mode") else { return }
+                }
+            }
+            // 身份尚未确认时，仅处理产品查询响应；电量和模式都不能提前发布。
+            guard let boseModel else { continue }
+            if let battery = BoseBMAPProtocol.parseBattery(frame, model: boseModel) {
+                state.battery = battery.hasLevel ? battery : nil
+            }
+            if BoseBMAPProtocol.isStatus(frame, block: BoseBMAPProtocol.audioModesBlock,
+                                         function: BoseBMAPProtocol.currentMode),
+               !frame.payload.isEmpty {
+                boseCurrentModeReceived = true
+                // Immersion、自定义模式等不能沿用上次 Quiet/Aware 的选中状态。
+                state.noiseMode = BoseBMAPProtocol.parseNoiseMode(frame)
+                if let mode = state.noiseMode { confirmNoiseReadback(mode) }
+            }
+
+            if phase == .verifying, state.battery?.hasLevel == true, boseCurrentModeReceived {
+                cancelDeadline()
+                phase = .ready
+                identityVerified = true
+                classicPolicy.confirmedConnection()
+            }
+            updateBoseCapabilities()
+        }
+    }
+
+    /// PROCESSING 只代表处理中：有界轮询同一 GET，不重复 SET，也不切换后端。
+    /// 原有 8 秒 deadline 仍负责失败；轮询成功或停止控制时立即取消。
+    private func startBoseModePolling() {
+        boseModePollTask?.cancel()
+        boseModePollTask = Task { @MainActor [weak self] in
+            for _ in 0..<30 {
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                guard let self, !Task.isCancelled, self.phase == .ready,
+                      self.pendingNoiseMode != nil, self.hasAuthorizedBinding else { return }
+                guard self.sendBose(BoseBMAPProtocol.queryCurrentMode(), label: "verify processing mode") else { return }
+                self.noiseReadback.didSendVerification()
+            }
+        }
+    }
+
+    private func updateBoseCapabilities() {
+        guard family == .bose, let boseModel else { return }
+        updateCapabilities(
+            battery: state.battery?.hasLevel == true ? boseModel.batteryCapability : nil,
+            // Quiet/Aware 已由产品 ID 和协议确认。当前若停在 Immersion 等
+            // 尚未映射的厂商模式，仍展示可切换模式，但不伪造任何选中项。
+            noise: boseCurrentModeReceived ? HeadphoneNoiseCapability(
+                modes: boseModel.noiseModes,
+                currentMode: state.noiseMode
+            ) : nil
+        )
+    }
+
+    @discardableResult
+    private func sendBose(_ data: Data, label: String) -> Bool {
+        trace("TX BOSE \(label)")
+        let result = bose.send(data)
+        guard result == kIOReturnSuccess else {
+            // 传输可以同步回调 failed，且已触发 stopClassic/有界重连。
+            // 不能再次失败处理，否则会清除原错误和刚排好的重连任务。
+            if case .failed = phase { return false }
+            failClassic("Bose 命令发送失败（\(result)）")
+            return false
+        }
+        return true
+    }
+
     private func confirmNoiseReadback(_ actual: NoiseMode) {
         guard pendingNoiseMode != nil, noiseReadback.confirms(actual) else { return }
         cancelDeadline()
         pendingNoiseMode = nil
         noiseReadback.clear()
+        boseModePollTask?.cancel(); boseModePollTask = nil
         busy = false
     }
 
@@ -712,8 +990,9 @@ public final class HeadphoneController: ObservableObject {
     /// 电量形状属于驱动契约，不由型号名猜测。
     private var batteryCapabilityForDriver: HeadphoneBatteryCapability? {
         switch family {
-        case .apple: return .earbudsWithCase
-        case .bowersWilkins, .sony, .oppo: return .single
+        case .apple, .oppo: return .earbudsWithCase
+        case .bose: return boseModel?.batteryCapability
+        case .bowersWilkins, .sony, .sennheiser: return .single
         case nil: return nil
         }
     }

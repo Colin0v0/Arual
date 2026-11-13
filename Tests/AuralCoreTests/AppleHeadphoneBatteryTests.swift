@@ -39,4 +39,13 @@ struct AppleHeadphoneBatteryTests {
         let data = Data(#"{"SPBluetoothDataType":[{"device_connected":[{"Pods":{"device_address":"AA-BB-CC-DD-EE-01"}}]}]}"#.utf8)
         #expect(try AppleHeadphoneBatteryStore.parse(data).isEmpty)
     }
+
+    @Test func mainBatterySupportsHeadphonesWithoutInventingEarbudParts() throws {
+        let data = Data(#"{"SPBluetoothDataType":[{"device_connected":[{"AirPods Max":{"device_address":"AA-BB-CC-DD-EE-01","device_batteryLevelMain":"82%"}}]}]}"#.utf8)
+        let reading = try AppleHeadphoneBatteryStore.parse(data)["AABBCCDDEE01"]
+        #expect(reading == AppleHeadphoneBattery(main: 82))
+        #expect(reading?.left == nil)
+        #expect(reading?.right == nil)
+        #expect(reading?.caseLevel == nil)
+    }
 }

@@ -36,8 +36,12 @@ protocol response. A model name alone never enables battery or noise controls.
 | Sony WF-1000XM4 / WF-1000XM5 / WF-1000XM6 / LinkBuds S | Sony MDR V2 | Yes | Off, cancellation, transparency | Experimental |
 | Sony WF-1000XM3 / WF-SP800N / WI-SP600N / MDR-1000X | Sony MDR V1 | Protocol-dependent | Protocol-dependent | Experimental |
 | OPPO Enco Air5s | OPPO RFCOMM | Yes | Off, cancellation, transparency | Upstream verified |
-| AirPods / Beats | Apple/Beats HAL | System-reported components | Off plus HAL-supported cancellation, transparency, and adaptive modes | Model-dependent |
-| Bose QC / QuietComfort family | Bose BMAP | Planned | Planned | Planned |
+| AirPods / Beats (including AirPods Max) | Apple/Beats HAL | System-reported components or Main | Off plus HAL-supported cancellation, transparency, and adaptive modes | Model-dependent |
+| Bose QuietComfort Ultra Headphones (2nd Gen) | Bose BMAP | Single device | Quiet, Aware | Upstream verified |
+| Bose QuietComfort Ultra Earbuds (2nd Gen) | Bose BMAP | Left, right, case | Quiet, Aware | Upstream verified |
+| Bose QuietComfort Headphones | Bose BMAP over SPP | Single device | Quiet, Aware | Upstream verified |
+| Bose QuietComfort 45 | Bose BMAP over SPP | Single device | Quiet, Aware after initialization | Experimental |
+| Sennheiser ACCENTUM Wireless | Qualcomm GAIA over RFCOMM | Single device | Off, cancellation, transparency | Upstream verified |
 | Fast Pair battery extension | Google Fast Pair | Planned | Optional hearables extension | Planned |
 
 “Protocol-dependent” means Aural waits for a real device reply before showing a
@@ -49,6 +53,53 @@ and the 8-byte init reply are confirmed. Aural never sends that query to a
 V1-only service, where `0x22` has a different meaning. Apple modes are read
 from `lstm`/`lsms`; Off is the system's raw mode `1`, while cancellation,
 transparency, and adaptive are exposed only when their capability bits are set.
+
+Bose support covers the QuietComfort Ultra Headphones (2nd Gen, `0x4082`,
+wolverine), Ultra Earbuds (2nd Gen, `0x4062`, edith), QuietComfort Headphones
+(`0x4075`, prince), and QuietComfort 45 (`0x4039`, duran). The Ultra products
+use RFCOMM channel 2; the other two use their SPP service and discover the
+channel through SDP. QC45 must complete the legacy initialization reply before
+product identity is queried. Product ID confirmation selects the model and
+battery layout; Bluetooth names only select the candidate driver. Quiet and
+Aware are the two exposed presets; the UI does not invent an Off mode or map
+Immersion to either.
+
+The earbud battery records identify right (`1`), left (`2`), and case (`3`).
+Aural does not use combined buds (`4`) to fill missing component values or infer
+charging or wear state. A valid new reading replaces the previous component
+snapshot, so unavailable parts do not retain stale percentages. Other Bose
+models still require separate protocol work. The four listed products have
+upstream hardware evidence; Aural has not completed independent Bose hardware
+acceptance.
+
+AirPods Max is treated as an over-ear Apple device, not as a pair of earbuds.
+When the HAL does not expose active in-ear placement, Aural does not use
+`unknown` placement to hide listening modes. If the system report provides only
+`device_batteryLevelMain`, that value is shown as a single battery; left,
+right, and case values are not synthesized. Earbuds with active ear detection
+continue to require both ears for mode changes.
+
+Sennheiser ACCENTUM Wireless uses the GAIA V3 RFCOMM service UUID
+`a2129ff3-081b-4c45-8afe-469d9c4842ec`. Aural verifies the exact `ACAEBT`
+model response and derives the visible mode from independent ANC and
+transparency toggles. ACCENTUM Plus, ACCENTUM True Wireless, and MOMENTUM 4
+are not mapped to these commands without separate capture evidence.
+
+## Research backlog
+
+These brands or models are not listed as supported until both the control
+protocol and the device identity join are proven on macOS.
+
+| Candidate | Current blocker |
+| --- | --- |
+| JBL Tune Flex 2 / JBL GATT family | The ANC protocol is documented by the MIT-licensed JblTray project, but macOS public CoreBluetooth does not expose the BLE MAC used to prove that a GATT peripheral is the same device as the selected Core Audio output. A name-only match is not acceptable. |
+| Huawei FreeBuds / FreeBuds Studio | No verified Aural implementation yet; each family needs its control transport, product identity, battery layout, and mode readback captured independently. |
+| Xiaomi / Redmi Buds | Same requirement as Huawei; model-name matching alone cannot establish a safe control channel. |
+| vivo TWS | Same requirement; no verified channel or capability table is included in this build. |
+
+Apple headphone support is capability-driven through the HAL. AirPods Max
+hardware still needs independent Aural acceptance even though the no-wear-gate
+and single-battery paths are now covered by simulator tests.
 
 ## Reporting a new model
 

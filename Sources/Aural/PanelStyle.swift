@@ -14,16 +14,21 @@ enum PanelStyle {
                                   dark: NSColor(red: 0.165, green: 0.165, blue: 0.176, alpha: 1))
     static let accent = adaptive(light: NSColor(red: 0.05, green: 0.43, blue: 0.96, alpha: 1),
                                  dark: NSColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 1))
-    static let ink = adaptive(light: NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
-                              dark: NSColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1))
-    static let secondary = adaptive(light: NSColor(red: 0.45, green: 0.45, blue: 0.49, alpha: 1),
-                                    dark: NSColor(red: 0.62, green: 0.62, blue: 0.66, alpha: 1))
-    static let line = adaptive(light: NSColor(red: 0.88, green: 0.88, blue: 0.90, alpha: 1),
-                               dark: NSColor(red: 0.26, green: 0.26, blue: 0.28, alpha: 1))
+    static let inkNSColor = adaptiveNSColor(light: NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
+                                            dark: NSColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1))
+    static let ink = Color(nsColor: inkNSColor)
+    static let secondaryNSColor = adaptiveNSColor(light: NSColor(red: 0.45, green: 0.45, blue: 0.49, alpha: 1),
+                                                  dark: NSColor(red: 0.62, green: 0.62, blue: 0.66, alpha: 1))
+    static let secondary = Color(nsColor: secondaryNSColor)
+    static let lineNSColor = adaptiveNSColor(light: NSColor(red: 0.88, green: 0.88, blue: 0.90, alpha: 1),
+                                             dark: NSColor(red: 0.26, green: 0.26, blue: 0.28, alpha: 1))
+    static let line = Color(nsColor: lineNSColor)
     // 内容不使用白色卡片，但可点击操作仍使用统一的白色悬停底色。
     static let controlHover = adaptive(light: controlHoverLight, dark: controlHoverDark)
     // 选中的页签是白色卡片；与设备图标的浅灰底、列表的平铺背景分开定义。
-    static let tabSelection = adaptive(light: .white, dark: NSColor(red: 0.23, green: 0.23, blue: 0.24, alpha: 1))
+    static let tabSelectionNSColor = adaptiveNSColor(light: .white,
+                                                     dark: NSColor(red: 0.23, green: 0.23, blue: 0.24, alpha: 1))
+    static let tabSelection = Color(nsColor: tabSelectionNSColor)
     /// 分段控件使用中性浅灰轨道，选中项仍是白色胶囊，不借用系统蓝色的强调色。
     static let segmentTrack = adaptive(light: NSColor(red: 0.94, green: 0.94, blue: 0.95, alpha: 1),
                                        dark: NSColor(red: 0.20, green: 0.20, blue: 0.21, alpha: 1))
@@ -86,11 +91,16 @@ enum PanelStyle {
             : controlHoverLight
     }
 
+    /// AppKit 控件需要同一份动态 NSColor；SwiftUI 侧再把它转换成 Color，避免两套色值漂移。
+    private static func adaptiveNSColor(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
+
     /// 同一套颜色随系统外观解析，避免每个视图各自判断 colorScheme 后产生色差。
     private static func adaptive(light: NSColor, dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        })
+        Color(nsColor: adaptiveNSColor(light: light, dark: dark))
     }
 }
 
@@ -237,7 +247,8 @@ struct PanelBooleanControl: View {
 /// 不再在不同 Button 的背景里销毁、重建 matchedGeometry 节点，避免快速反向点击时跳位。
 struct PanelTabs<Selection: Hashable>: View {
     let items: [Selection]
-    let selection: Selection
+    /// 耳机可能停在尚未映射的厂商聆听模式；此时不伪造选中项，但仍允许切换已确认模式。
+    let selection: Selection?
     let title: (Selection) -> String
     var count: (Selection) -> Int? = { _ in nil }
     let select: (Selection) -> Void
@@ -263,7 +274,7 @@ struct PanelTabs<Selection: Hashable>: View {
         }
         .background(alignment: .leading) {
             GeometryReader { geometry in
-                if let index = items.firstIndex(of: selection) {
+                if let selection, let index = items.firstIndex(of: selection) {
                     let width = (geometry.size.width - CGFloat(items.count - 1) * 4) / CGFloat(items.count)
                     RoundedRectangle(cornerRadius: 9)
                         .fill(PanelStyle.tabSelection)

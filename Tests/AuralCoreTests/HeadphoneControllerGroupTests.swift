@@ -72,7 +72,7 @@ struct HeadphoneControllerGroupTests {
         #expect(firstDriver.capabilities.noise?.currentMode == .cancellation)
         #expect(firstDriver.boundOutputUID == first.uid)
         #expect(secondDriver.boundOutputUID == second.uid)
-        #expect(group.battery == nil)
+        #expect(group.entries.count == 2)
         group.shutdown()
     }
 

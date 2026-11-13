@@ -22,6 +22,16 @@ struct AppleHeadphoneHALTests {
         #expect(AppleHeadphoneHAL.wearState(primary: 1, secondary: 9) == .unknown)
     }
 
+    @Test func noWearDetectionMeansNoWearGateForHeadphones() {
+        // AirPods Max 这类头戴式设备不公开双耳入耳位置；没有门控不等于未佩戴。
+        #expect(AppleHeadphoneWearState.notApplicable.isWorn == nil)
+        #expect(AppleHeadphoneWearState.notApplicable.allowsModeControl)
+        #expect(AppleHeadphoneWearState.bothEars.allowsModeControl)
+        #expect(!AppleHeadphoneWearState.singleEar.allowsModeControl)
+        #expect(!AppleHeadphoneWearState.notWorn.allowsModeControl)
+        #expect(!AppleHeadphoneWearState.unknown.allowsModeControl)
+    }
+
     @Test func supportMaskExposesOnlyAdvertisedListeningModes() {
         // 原始线值 3 表示当前正在透传；能力位 7 同时公开降噪、透传和自适应。
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 3)

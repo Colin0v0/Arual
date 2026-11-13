@@ -3,13 +3,21 @@ import Foundation
 
 /// 保留佩戴状态的确定程度，不能把未知的一侧当成已佩戴或单耳。
 public enum AppleHeadphoneWearState: Equatable, Sendable {
+    /// 设备没有可用的入耳检测，或用户在系统中关闭了该功能。
+    /// 这不是“未知佩戴”，不能因此永久隐藏头戴式耳机的模式控制。
+    case notApplicable
     case bothEars, singleEar, notWorn, unknown
     public var isWorn: Bool? {
         switch self {
         case .bothEars, .singleEar: return true
         case .notWorn: return false
-        case .unknown: return nil
+        case .notApplicable, .unknown: return nil
         }
+    }
+
+    /// 只有已启用的入耳检测才要求双耳佩戴；没有佩戴门控时不伪造佩戴状态。
+    public var allowsModeControl: Bool {
+        self == .bothEars || self == .notApplicable
     }
 }
 
@@ -73,10 +81,12 @@ public enum AppleHeadphoneHAL {
     public static func wearState(deviceID: AudioDeviceID) throws -> AppleHeadphoneWearState {
         let enabledAddress = HAL.address(0x6965_6465)
         let placementAddress = HAL.address(0x6965_7362)
-        guard isSupported(deviceID: deviceID), HAL.hasProperty(deviceID, enabledAddress),
-              HAL.hasProperty(deviceID, placementAddress) else { return .unknown }
+        guard isSupported(deviceID: deviceID) else { return .unknown }
+        guard HAL.hasProperty(deviceID, enabledAddress),
+              HAL.hasProperty(deviceID, placementAddress) else { return .notApplicable }
         let enabled: UInt32 = try HAL.read(deviceID, enabledAddress, initial: 0)
-        guard enabled == 1 else { return .unknown }
+        // 系统关闭入耳检测后，设备仍可正常切换降噪；不能把“用户关闭”当成未佩戴。
+        guard enabled == 1 else { return enabled == 0 ? .notApplicable : .unknown }
         let placement = try HAL.read(deviceID, placementAddress, initial: (UInt32(0), UInt32(0)))
         return wearState(primary: placement.0, secondary: placement.1)
     }
@@ -122,7 +132,7 @@ public enum AppleHeadphoneHAL {
     /// 只提交一次写入。异步读回和取消由控制器完成，不在后台留一条不可取消的 sleep/write 链路。
     public static func requestNoiseMode(_ mode: NoiseMode, output: AudioOutput) throws {
         let before = try snapshot(on: output.id)
-        guard before.wearState == .bothEars else { throw AppleHeadphoneNotWorn() }
+        guard before.wearState.allowsModeControl else { throw AppleHeadphoneNotWorn() }
         guard before.supportedNoiseModes.contains(mode) else {
             throw AudioFailure("Apple 耳机未公开“\(mode.title)”聆听模式")
         }

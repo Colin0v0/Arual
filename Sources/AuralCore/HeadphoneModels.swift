@@ -5,13 +5,15 @@ import Foundation
 
 /// 型号名称只负责选择驱动；连接后的真实协议响应才决定可用能力。
 public enum HeadphoneFamily: String, CaseIterable, Sendable {
-    case bowersWilkins, sony, oppo, apple
+    case bowersWilkins, sony, oppo, bose, sennheiser, apple
 
     public var title: String {
         switch self {
         case .bowersWilkins: return "Bowers & Wilkins"
         case .sony: return "Sony MDR"
         case .oppo: return "OPPO Enco"
+        case .bose: return "Bose"
+        case .sennheiser: return "Sennheiser"
         case .apple: return "Apple / Beats"
         }
     }
@@ -29,6 +31,23 @@ public enum HeadphoneFamily: String, CaseIterable, Sendable {
             return .sony
         }
         if normalized.contains("oppo") && normalized.contains("enco") { return .oppo }
+        // Ultra 二代的头戴/入耳均已登记；名称只选择候选驱动，最终必须核对产品 ID。
+        // 不把 QC35、QC45 等其他通道或协议的 Bose 产品纳入此分支。
+        if normalized.contains("qcultraheadphones")
+            || normalized.contains("quietcomfortultraheadphones")
+            || normalized.contains("qcultraearbuds")
+            || normalized.contains("quietcomfortultraearbuds")
+            || normalized.contains("quietcomfortultra2")
+            || normalized.contains("quietcomfortheadphones")
+            || normalized.contains("boseqcheadphones")
+            || normalized.contains("quietcomfort45") || normalized.contains("qc45") {
+            return .bose
+        }
+        // 本轮只接入 ACCENTUM 头戴基础款，不能把 Plus/TW 当成相同的两个开关协议。
+        if normalized.contains("accentum"), !normalized.contains("plus"),
+           !normalized.contains("truewireless"), !normalized.hasSuffix("tw") {
+            return .sennheiser
+        }
         return nil
     }
 

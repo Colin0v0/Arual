@@ -36,7 +36,58 @@ struct HeadphoneCapabilitiesTests {
             HeadphoneModelCatalog.profile(for: "OPPO Enco Air5s", family: .oppo)
         )
         #expect(profile.id == "oppo-enco-air5s")
+        #expect(profile.battery == .earbudsWithCase)
         #expect(profile.noiseModes == [.off, .cancellation, .transparency])
+    }
+
+    @Test func boseUltraHeadphonesUseOnlyTheVerifiedTwoModeProfile() throws {
+        let profile = try #require(
+            HeadphoneModelCatalog.profile(
+                for: "Bose QuietComfort Ultra Headphones (2nd Gen)",
+                family: .bose
+            )
+        )
+        #expect(profile.id == "bose-quietcomfort-ultra-headphones-2")
+        #expect(profile.battery == .single)
+        #expect(profile.noiseModes == [.cancellation, .transparency])
+        #expect(profile.compatibility == .upstreamVerified)
+
+        let renamed = try #require(
+            HeadphoneModelCatalog.profile(
+                for: "Colin QC Ultra Headphones",
+                family: .bose
+            )
+        )
+        #expect(renamed.id == profile.id)
+    }
+
+    @Test func boseProductProfilesMatchTheWireBatteryShapes() throws {
+        for model in BoseBMAPModel.allCases {
+            let profile = try #require(HeadphoneModelCatalog.profiles.first { $0.id == model.catalogID })
+            #expect(profile.family == .bose)
+            #expect(profile.battery == model.batteryCapability)
+            #expect(profile.noiseModes == model.noiseModes)
+            #expect(profile.compatibility == model.compatibility)
+        }
+        let earbuds = try #require(HeadphoneModelCatalog.profile(
+            for: "Bose QC Ultra Earbuds (2nd Gen)", family: .bose))
+        #expect(earbuds.id == "bose-quietcomfort-ultra-earbuds-2")
+        #expect(earbuds.battery == .earbudsWithCase)
+    }
+
+    @Test func sennheiserProfileIsLimitedToAccentumWireless() throws {
+        let profile = try #require(
+            HeadphoneModelCatalog.profile(
+                for: "Sennheiser ACCENTUM Wireless",
+                family: .sennheiser
+            )
+        )
+        #expect(profile.id == "sennheiser-accentum-wireless")
+        #expect(profile.battery == .single)
+        #expect(profile.noiseModes == [.off, .cancellation, .transparency])
+        #expect(profile.compatibility == .upstreamVerified)
+        #expect(HeadphoneModelCatalog.profile(for: "Sennheiser ACCENTUM Plus",
+                                              family: .sennheiser) == nil)
     }
 
     @Test func sonyV2ModelsUseTheirConfirmedThreeModeProfiles() throws {
