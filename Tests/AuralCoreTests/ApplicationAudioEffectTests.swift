@@ -48,6 +48,42 @@ struct ApplicationAudioEffectSettingsTests {
         #expect(!AppAudioEffectParameterWord.enabled(in: disabled))
     }
 
+    @Test func spatialSettingsDefaultOffAndRemainIndependentFromEQPresets() throws {
+        var settings = AppAudioEffectSettings(enabled: true, preset: .music)
+        #expect(settings.spatial.mode == .off)
+        #expect(abs(settings.spatial.intensity - AppAudioSpatialSettings.defaultIntensity) < 0.001)
+
+        let spatial = AppAudioSpatialSettings(mode: .hall, intensity: 0.35)
+        settings.spatial = spatial
+        settings.apply(.voice)
+        #expect(settings.spatial == spatial)
+        #expect(settings.isValid)
+
+        let encoded = try JSONEncoder().encode(settings)
+        let restored = try JSONDecoder().decode(AppAudioEffectSettings.self, from: encoded)
+        #expect(restored == settings)
+    }
+
+    @Test func legacyEffectJSONWithoutSpatialFieldMigratesToOff() throws {
+        let encoded = try JSONEncoder().encode(AppAudioEffectSettings(enabled: true,
+                                                                     preset: .flat))
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "spatial")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+        let settings = try JSONDecoder().decode(AppAudioEffectSettings.self, from: legacy)
+        #expect(settings.spatial == .disabled)
+        #expect(settings.isValid)
+    }
+
+    @Test func spatialParameterWordRoundTripsModeAndIntensity() {
+        var settings = AppAudioEffectSettings(enabled: true)
+        settings.spatial = AppAudioSpatialSettings(mode: .vocalSpace, intensity: 0.37)
+        let word = AppAudioSpatialParameterWord.pack(settings)
+        #expect(AppAudioSpatialParameterWord.mode(in: word) == .vocalSpace)
+        #expect(abs(AppAudioSpatialParameterWord.intensity(in: word) - 0.37) < 0.001)
+        #expect(AppAudioSpatialParameterWord.pack(.disabled) == 0)
+    }
+
     @Test func effectsRequireRealMixingEvenWithoutVolumeManagement() {
         let state = ApplicationMixState()
         #expect(ApplicationAudioIntent.mode(state: state, isPlaying: false,
@@ -73,6 +109,57 @@ struct ApplicationAudioEffectRenderTests {
         let maximumDelta = zip(processed.output, dry.output).map { abs($0.0 - $0.1) }.max() ?? 0
         #expect(maximumDelta > 0.01)
         #expect(processed.output.allSatisfy { $0.isFinite })
+    }
+
+    @Test func everySpatialModeChangesTheWaveform() {
+        let dry = render(sampleAt: sine(frequency: 440, amplitude: 0.25),
+                         frames: 8_192,
+                         effect: .disabled)
+        for mode in [AppAudioSpatialMode.room, .hall, .vocalSpace] {
+            var effect = AppAudioEffectSettings(enabled: true)
+            effect.spatial = AppAudioSpatialSettings(mode: mode, intensity: 0.35)
+            let processed = render(sampleAt: sine(frequency: 440, amplitude: 0.25),
+                                   frames: 8_192,
+                                   effect: effect)
+            let maximumDelta = zip(processed.output, dry.output)
+                .map { abs($0.0 - $0.1) }.max() ?? 0
+            #expect(maximumDelta > 0.001)
+            #expect(processed.output.allSatisfy { $0.isFinite })
+        }
+    }
+
+    @Test func spatialReverbAndEQStayInsideHeadroomWhenCombined() {
+        var effect = AppAudioEffectSettings(enabled: true, preset: .bassBoost)
+        effect.spatial = AppAudioSpatialSettings(mode: .hall, intensity: 1)
+        let result = render(sampleAt: { frame in frame.isMultiple(of: 2) ? 0.9 : -0.9 },
+                            frames: 16_384,
+                            effect: effect)
+        #expect(result.output.allSatisfy { $0.isFinite && abs($0) <= 0.9801 })
+    }
+
+    @Test func spatialReverbClearsItsTailAfterSilence() {
+        var effect = AppAudioEffectSettings(enabled: true)
+        effect.spatial = AppAudioSpatialSettings(mode: .room, intensity: 0.35)
+        var dsp = AppAudioSpatialDSP(sampleRate: 48_000)
+        let word = AppAudioSpatialParameterWord.pack(effect)
+        dsp.beginBuffer(word: word)
+        var tailPeak: Float = 0
+        var finalPeak: Float = 0
+        for frame in 0..<48_000 {
+            _ = dsp.beginFrame()
+            // 前 16 帧是脉冲，之后保持数字静音，验证尾音会被清空。
+            let input: Float = frame < 16 ? 0.5 : 0
+            let output = dsp.processFrame(left: input, right: input, channels: 2)
+            let magnitude = max(abs(output.0), abs(output.1))
+            if (2_000..<12_000).contains(frame) {
+                tailPeak = max(tailPeak, magnitude)
+            }
+            if frame >= 46_000 {
+                finalPeak = max(finalPeak, magnitude)
+            }
+        }
+        #expect(tailPeak > 0.000_01)
+        #expect(finalPeak < 0.000_001)
     }
 
     @Test func limiterKeepsBoostedSignalInsideHeadroom() {

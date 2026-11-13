@@ -98,6 +98,16 @@ struct AppSettingsTests {
         #expect(L10n.text("频响曲线预览；使用下方推子调整",
                           language: .english)
                 == "Response curve preview; use the faders below to adjust")
+        #expect(L10n.text("均衡器", language: .english) == "Equalizer")
+        #expect(L10n.text("空间", language: .english) == "Spatial")
+        #expect(L10n.text("空间效果", language: .english) == "Spatial Effects")
+        #expect(L10n.text("房间", language: .english) == "Room")
+        #expect(L10n.text("大厅", language: .english) == "Hall")
+        #expect(L10n.text("人声空间", language: .english) == "Vocal Space")
+        #expect(L10n.text("混响强度", language: .english) == "Reverb Amount")
+        #expect(L10n.format("仅影响 %@，不会改变其他 App", language: .english,
+                            arguments: ["Chrome"])
+                == "Affects Chrome only and leaves other apps unchanged")
     }
 
     @Test func appAudioRoutesPersistAcrossStoreInstances() throws {
@@ -208,7 +218,7 @@ struct AppSettingsTests {
             "登录 Mac 后自动运行 Aural。",
             "关闭后，耳机控制从主面板隐藏。",
             "关闭后，多设备输出功能从输出面板隐藏。",
-            "为每个应用提供 10 段均衡器和预设。",
+            "为每个应用提供均衡器、空间效果和预设。",
             "固定设备断开后隐藏。"
         ]
         for key in keys {

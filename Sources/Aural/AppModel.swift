@@ -618,7 +618,7 @@ final class AppModel: ObservableObject {
     /// 拖动推子时只更新实时原子参数；不写盘、不刷新整个应用列表、不重建音频会话。
     func previewApplicationAudioEffect(_ settings: AppAudioEffectSettings,
                                        for applicationID: String) {
-        guard settings.isValid else { return }
+        guard applicationEffectsEnabled, settings.isValid else { return }
         // 预览不覆盖正式设置；A/B 旁路时维持当前试听状态，直到用户退出旁路。
         guard !isApplicationAudioEffectBypassed(for: applicationID) else { return }
         if let session = sessions[applicationID], session.mode == .mixing {
@@ -638,7 +638,9 @@ final class AppModel: ObservableObject {
     /// UI 每次修改都保存同一份完整设置，避免预设、开关和滑块分散在多个存储键中。
     func setApplicationAudioEffect(_ settings: AppAudioEffectSettings, for applicationID: String) {
         guard settings.isValid else {
-            operationError = "应用音效增益必须在 -12～12 dB 之间"
+            operationError = settings.eq.isValid
+                ? "空间效果强度必须在 0～100% 之间"
+                : "应用音效增益必须在 -12～12 dB 之间"
             return
         }
         guard let key = applicationRouteStorageKey(for: applicationID) else {

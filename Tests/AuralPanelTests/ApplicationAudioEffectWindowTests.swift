@@ -57,8 +57,9 @@ struct ApplicationAudioEffectWindowTests {
         #expect(heights.fader >= EqualizerLayoutMetrics.minimumFaderHeight)
         let bottom = EqualizerLayoutMetrics.padding
             + EqualizerLayoutMetrics.headerHeight
+            + EqualizerLayoutMetrics.pageTabHeight
             + EqualizerLayoutMetrics.toolbarHeight
-            + EqualizerLayoutMetrics.spacing * 3
+            + EqualizerLayoutMetrics.spacing * 4
             + heights.curve + heights.fader
         #expect(abs(bottom - (ApplicationAudioEffectMetrics.height - EqualizerLayoutMetrics.padding)) < 0.001)
         #expect(AppAudioEffectEQ.bandCount == 10)
@@ -101,6 +102,78 @@ struct ApplicationAudioEffectWindowTests {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: "/tmp/aural-app-effects-window-dark.png"))
+        #expect(model.shutdown())
+    }
+
+    @Test func spatialPageRendersAndPersistsItsOwnSettings() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let suite = "Aural.AppAudioSpatialWindowTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = AppAudioEffectStore(defaults: defaults)
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioEffectStore: store,
+                             appAudioEffectsEnabled: true)
+        var effect = AppAudioEffectSettings(enabled: true, preset: .flat)
+        effect.spatial = AppAudioSpatialSettings(mode: .hall, intensity: 0.2)
+        model.setApplicationAudioEffect(effect, for: audio.row.id)
+
+        let view = ApplicationAudioEffectView(
+            model: model,
+            applicationID: audio.row.id,
+            appName: audio.row.label,
+            applicationURL: nil,
+            initialPage: .spatial
+        )
+        .environment(\.appLanguage, .chinese)
+        .environment(\.colorScheme, .light)
+        let host = NSHostingView(rootView: view)
+        host.frame.size = ApplicationAudioEffectMetrics.size
+        PanelTestSupport.flushLayout(host)
+        #expect(host.bounds.size == ApplicationAudioEffectMetrics.size)
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/aural-app-effects-window-spatial-light.png"))
+
+        #expect(try store.load()["bundle:test.music"]?.spatial == effect.spatial)
+        #expect(model.applicationAudioEffect(for: audio.row.id).preset == .builtIn(.flat))
+        #expect(model.shutdown())
+    }
+
+    @Test func spatialPageRendersDarkAppearance() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let suite = "Aural.AppAudioSpatialWindowDarkTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioEffectStore: AppAudioEffectStore(defaults: defaults),
+                             appAudioEffectsEnabled: true)
+        var effect = AppAudioEffectSettings(enabled: true, preset: .music)
+        effect.spatial = AppAudioSpatialSettings(mode: .vocalSpace, intensity: 0.35)
+        model.setApplicationAudioEffect(effect, for: audio.row.id)
+        let view = ApplicationAudioEffectView(
+            model: model,
+            applicationID: audio.row.id,
+            appName: audio.row.label,
+            applicationURL: nil,
+            initialPage: .spatial
+        )
+        .environment(\.appLanguage, .english)
+        .environment(\.colorScheme, .dark)
+        let host = NSHostingView(rootView: view)
+        host.frame.size = ApplicationAudioEffectMetrics.size
+        PanelTestSupport.flushLayout(host)
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/aural-app-effects-window-spatial-dark.png"))
         #expect(model.shutdown())
     }
 

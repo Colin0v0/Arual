@@ -23,6 +23,7 @@ public struct GainRamp {
 final class RenderState {
     let target = Atomic<UInt32>(Float(1).bitPattern)
     let effectWord = Atomic<UInt64>(AppAudioEffectParameterWord.pack(.disabled))
+    let spatialWord = Atomic<UInt64>(AppAudioSpatialParameterWord.pack(.disabled))
     let fault = Atomic<Bool>(false)
     let callbacks = Atomic<UInt64>(0)
     let peak = AudioPeakMailbox()
@@ -35,11 +36,13 @@ final class RenderState {
         ramp = GainRamp(sampleRate: sampleRate, initial: initialGain)
         effects = AppAudioEffectDSP(sampleRate: sampleRate)
         effectWord.store(AppAudioEffectParameterWord.pack(effect), ordering: .relaxed)
+        spatialWord.store(AppAudioSpatialParameterWord.pack(effect), ordering: .relaxed)
     }
 
     /// 原子参数只保存用户意图；滤波器状态和系数表继续由已启动的音频会话独占。
     func setEffect(_ settings: AppAudioEffectSettings?) {
         effectWord.store(AppAudioEffectParameterWord.pack(settings), ordering: .relaxed)
+        spatialWord.store(AppAudioSpatialParameterWord.pack(settings), ordering: .relaxed)
     }
 }
 
@@ -186,7 +189,10 @@ let auralAudioCallback: AudioDeviceIOProc = { _, _, input, _, output, _, context
     let effectWord = state.mode == .mixing
         ? state.effectWord.load(ordering: .relaxed)
         : AppAudioEffectParameterWord.pack(.disabled)
-    state.effects.beginBuffer(word: effectWord)
+    let spatialWord = state.mode == .mixing
+        ? state.spatialWord.load(ordering: .relaxed)
+        : AppAudioSpatialParameterWord.pack(.disabled)
+    state.effects.beginBuffer(effectWord: effectWord, spatialWord: spatialWord)
     var peak: Float = 0
     for frame in 0..<frames {
         let gain = state.mode == .mixing ? state.ramp.advance(toward: target) : 1
@@ -206,6 +212,7 @@ let auralAudioCallback: AudioDeviceIOProc = { _, _, input, _, output, _, context
                 }
                 channelOffset += channels
             }
+            state.effects.processSpatial(&processed, channels: totalChannels)
             let limited = state.effects.limitFrame(&processed, channels: totalChannels)
             peak = max(peak, abs(limited.0), abs(limited.1))
             channelOffset = 0

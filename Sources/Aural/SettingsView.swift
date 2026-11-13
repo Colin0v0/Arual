@@ -118,7 +118,7 @@ struct SettingsView: View {
             PanelDivider()
             SettingsToggleRow(
                 title: settings.localized("启用应用音效"),
-                detail: settings.localized("为每个应用提供 10 段均衡器和预设。"),
+                detail: settings.localized("为每个应用提供均衡器、空间效果和预设。"),
                 isOn: applicationEffectsBinding
             )
             PanelDivider()

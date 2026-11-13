@@ -26,7 +26,7 @@ devices, give each app the level it needs, send audio to more than one place,
 and check on your headphones. Open an app’s Effects window when you want to
 shape its sound.
 
-> **Current release: 0.3.0**
+> **Current release: 0.3.1**
 >
 > Aural is distributed directly and is not notarized yet. macOS may ask you to
 > confirm the first launch.

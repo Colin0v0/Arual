@@ -170,17 +170,29 @@ struct ApplicationMixerRow: View {
         return L10n.format("音效：%@", language: language, arguments: [preset])
     }
 
-    /// 行图标只显示简短状态，具体预设名和十段数值都在独立窗口中读取。
+    /// 行图标只显示简短状态，具体预设名、十段数值和空间模式都在独立窗口中读取。
     private var effectPresetTitle: String {
+        let equalizerTitle: String
         switch audioEffect.preset {
-        case .builtIn(.flat): return L10n.text("平坦", language: language)
-        case .builtIn(.voice): return L10n.text("语音增强", language: language)
-        case .builtIn(.podcast): return L10n.text("播客", language: language)
-        case .builtIn(.music): return L10n.text("音乐", language: language)
-        case .builtIn(.movie): return L10n.text("电影", language: language)
-        case .builtIn(.bassBoost): return L10n.text("低音增强", language: language)
-        case .custom: return L10n.text("我的预设", language: language)
-        case .manual: return L10n.text("已修改", language: language)
+        case .builtIn(.flat): equalizerTitle = L10n.text("平坦", language: language)
+        case .builtIn(.voice): equalizerTitle = L10n.text("语音增强", language: language)
+        case .builtIn(.podcast): equalizerTitle = L10n.text("播客", language: language)
+        case .builtIn(.music): equalizerTitle = L10n.text("音乐", language: language)
+        case .builtIn(.movie): equalizerTitle = L10n.text("电影", language: language)
+        case .builtIn(.bassBoost): equalizerTitle = L10n.text("低音增强", language: language)
+        case .custom: equalizerTitle = L10n.text("我的预设", language: language)
+        case .manual: equalizerTitle = L10n.text("已修改", language: language)
+        }
+        guard audioEffect.spatial.mode.isEnabled else { return equalizerTitle }
+        return "\(equalizerTitle) + \(spatialModeTitle(audioEffect.spatial.mode))"
+    }
+
+    private func spatialModeTitle(_ mode: AppAudioSpatialMode) -> String {
+        switch mode {
+        case .off: return L10n.text("关闭", language: language)
+        case .room: return L10n.text("房间", language: language)
+        case .hall: return L10n.text("大厅", language: language)
+        case .vocalSpace: return L10n.text("人声空间", language: language)
         }
     }
 

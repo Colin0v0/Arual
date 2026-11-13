@@ -284,8 +284,16 @@ enum L10n {
         "音效：关闭": "Effects: Off",
         "音效：%@": "Effects: %@",
         "启用应用音效": "Enable App Effects",
-        "为每个应用提供 10 段均衡器和预设。":
-            "Add a 10-band EQ and presets for each app.",
+        "均衡器": "Equalizer",
+        "空间": "Spatial",
+        "空间效果": "Spatial Effects",
+        "房间": "Room",
+        "大厅": "Hall",
+        "人声空间": "Vocal Space",
+        "混响强度": "Reverb Amount",
+        "仅影响 %@，不会改变其他 App": "Affects %@ only and leaves other apps unchanged",
+        "为每个应用提供均衡器、空间效果和预设。":
+            "Add an EQ, spatial effects, and presets for each app.",
         "关闭后不会改变该应用的声音。": "When off, this app’s sound is unchanged.",
         "预设": "Preset",
         "预设 1": "Preset 1",
@@ -328,6 +336,8 @@ enum L10n {
             "App effects must contain ten valid gains",
         "应用音效增益必须在 -12～12 dB 之间":
             "App effect gains must be between -12 and 12 dB",
+        "空间效果强度必须在 0～100% 之间":
+            "Spatial effect intensity must be between 0 and 100%",
         "该应用没有稳定身份，不能保存应用音效":
             "This app has no stable identity, so its effects cannot be saved",
         "预设名称不能为空，且不能超过 40 个字符":

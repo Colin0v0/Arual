@@ -34,6 +34,72 @@ public enum AppAudioEffectPresetSelection: Codable, Equatable, Sendable {
     case manual
 }
 
+/// 空间效果与 EQ 是两条独立的听感维度：EQ 调频响，空间效果只增加房间反射。
+/// 模式顺序同时用于参数原子字编码，后续新增模式只能追加，不能插入到中间。
+public enum AppAudioSpatialMode: String, Codable, CaseIterable, Sendable {
+    case off
+    case room
+    case hall
+    case vocalSpace
+
+    public var isEnabled: Bool { self != .off }
+
+    /// 实时原子字只搬运小型整数索引，不把字符串查询带进音频线程。
+    var parameterIndex: UInt64 {
+        switch self {
+        case .off: return 0
+        case .room: return 1
+        case .hall: return 2
+        case .vocalSpace: return 3
+        }
+    }
+
+    init(parameterIndex: UInt64) {
+        switch parameterIndex {
+        case 1: self = .room
+        case 2: self = .hall
+        case 3: self = .vocalSpace
+        default: self = .off
+        }
+    }
+}
+
+/// 混响强度与模式分开保存。切到“关闭”时保留用户上次的强度，重新开启不会恢复成默认值。
+public struct AppAudioSpatialSettings: Codable, Equatable, Sendable {
+    public static let minimumIntensity: Float = 0
+    public static let maximumIntensity: Float = 1
+    public static let defaultIntensity: Float = 0.2
+    public static let intensityStep: Float = 0.01
+    public static let disabled = AppAudioSpatialSettings()
+
+    public var mode: AppAudioSpatialMode
+    public var intensity: Float
+
+    public init(mode: AppAudioSpatialMode = .off,
+                intensity: Float = AppAudioSpatialSettings.defaultIntensity) {
+        self.mode = mode
+        self.intensity = Self.snappedIntensity(intensity)
+    }
+
+    public var isEnabled: Bool { mode.isEnabled }
+
+    public static func snappedIntensity(_ value: Float) -> Float {
+        guard value.isFinite else { return defaultIntensity }
+        let clamped = min(max(value, minimumIntensity), maximumIntensity)
+        return (clamped / intensityStep).rounded() * intensityStep
+    }
+
+    public var isValid: Bool {
+        intensity.isFinite
+            && (Self.minimumIntensity...Self.maximumIntensity).contains(intensity)
+            && abs(intensity - Self.snappedIntensity(intensity)) < 0.001
+    }
+
+    public mutating func setIntensity(_ value: Float) {
+        intensity = Self.snappedIntensity(value)
+    }
+}
+
 /// 固定十个频段，数组顺序就是界面从左到右的顺序。
 /// 使用固定长度而不是三条独立字段，避免界面、持久化和实时参数出现不同步。
 public struct AppAudioEffectEQ: Codable, Equatable, Sendable {
@@ -137,13 +203,16 @@ public struct AppAudioEffectSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var preset: AppAudioEffectPresetSelection
     public var eq: AppAudioEffectEQ
+    public var spatial: AppAudioSpatialSettings
 
     public init(enabled: Bool = false,
                 preset: AppAudioEffectPresetSelection = .builtIn(.flat),
-                eq: AppAudioEffectEQ = .flat) {
+                eq: AppAudioEffectEQ = .flat,
+                spatial: AppAudioSpatialSettings = .disabled) {
         self.enabled = enabled
         self.preset = preset
         self.eq = eq.snapped
+        self.spatial = spatial
     }
 
     public init(enabled: Bool = false, preset: AppAudioEffectPreset) {
@@ -154,6 +223,7 @@ public struct AppAudioEffectSettings: Codable, Equatable, Sendable {
         case enabled
         case preset
         case eq
+        case spatial
         case lowGainDB
         case midGainDB
         case highGainDB
@@ -166,6 +236,10 @@ public struct AppAudioEffectSettings: Codable, Equatable, Sendable {
         if container.contains(.eq) {
             preset = try container.decode(AppAudioEffectPresetSelection.self, forKey: .preset)
             eq = try container.decode(AppAudioEffectEQ.self, forKey: .eq)
+            // 0.3.0 没有空间字段；旧记录明确迁移为关闭，不推测任何房间模式。
+            spatial = container.contains(.spatial)
+                ? try container.decode(AppAudioSpatialSettings.self, forKey: .spatial)
+                : .disabled
         } else {
             let legacyPreset = try container.decode(String.self, forKey: .preset)
             let low = try container.decode(Float.self, forKey: .lowGainDB)
@@ -186,6 +260,7 @@ public struct AppAudioEffectSettings: Codable, Equatable, Sendable {
                                         low: low, mid: mid, high: high)
             preset = migrated.preset
             eq = migrated.eq
+            spatial = .disabled
         }
         guard isValid else {
             throw DecodingError.dataCorrupted(
@@ -200,6 +275,7 @@ public struct AppAudioEffectSettings: Codable, Equatable, Sendable {
         try container.encode(enabled, forKey: .enabled)
         try container.encode(preset, forKey: .preset)
         try container.encode(eq, forKey: .eq)
+        try container.encode(spatial, forKey: .spatial)
     }
 
     public static let disabled = AppAudioEffectSettings()
@@ -211,7 +287,7 @@ public struct AppAudioEffectSettings: Codable, Equatable, Sendable {
 
     /// 持久化层在写入和回读时都使用同一套范围校验，拒绝损坏数据而不是静默修正。
     public var isValid: Bool {
-        guard eq.isValid else { return false }
+        guard eq.isValid, spatial.isValid else { return false }
         if case .builtIn(let preset) = self.preset {
             return eq.matches(preset)
         }
