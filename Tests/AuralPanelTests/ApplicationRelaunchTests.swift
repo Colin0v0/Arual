@@ -31,8 +31,8 @@ struct ApplicationRelaunchTests {
 
     @Test func relaunchArgumentsNeverEnableUpdateInstallation() {
         let app = URL(fileURLWithPath: "/Applications/Aural Test.app")
-        let args = ApplicationRelaunch.helperArguments(app: app, pid: 123, version: "0.2.3")
-        #expect(args == ["--relaunch", "--pid", "123", "--app", app.path, "--version", "0.2.3"])
+        let args = ApplicationRelaunch.helperArguments(app: app, pid: 123, version: "0.2.4")
+        #expect(args == ["--relaunch", "--pid", "123", "--app", app.path, "--version", "0.2.4"])
         #expect(!args.contains("--stage"))
     }
 }
