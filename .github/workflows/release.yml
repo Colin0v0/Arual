@@ -150,7 +150,7 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
           gh release create "$TAG" "$DMG" "$DMG.sha256" "$ZIP" "$ZIP.sha256" \
-            --title "Aural $VERSION — Development Preview" \
+            --title "Aural $VERSION" \
             --notes-file "$NOTES" \
-            --prerelease \
+            --latest \
             --verify-tag
