@@ -17,7 +17,7 @@
 
 Aural keeps everyday audio controls in one small menu bar panel: switch speakers or microphones, adjust apps separately, use multiple outputs, and control compatible Bluetooth headphones.
 
-> **Stable release · 0.2.4**
+> **Stable release · 0.3.0**
 >
 > Aural is distributed directly and is not Apple-notarized yet. macOS may ask you to confirm the first launch.
 
@@ -50,14 +50,30 @@ Changing one app's output does not affect other apps or the system-wide output. 
 
 Available controls vary by model and firmware.
 
-| Headphones | What Aural can do |
-| --- | --- |
-| Bowers & Wilkins PX / PI | Battery and supported noise-control modes |
-| Sony MDR V1 | Battery and supported noise-control modes |
-| OPPO Enco | Battery and supported noise modes for identified models |
-| AirPods / Beats | Supported listening modes exposed by macOS |
+| Headphones | Status | What Aural can do |
+| --- | --- | --- |
+| Bowers & Wilkins Px7 S3 / Px8 | Upstream verified | Battery and three supported noise modes |
+| Bowers & Wilkins Px7 S2 / Pi5 / Pi6 / Pi7 / Pi8 | Experimental | Battery and three supported noise modes |
+| Sony WH-1000XM3 | Upstream verified | Battery, noise modes, and optional wind reduction |
+| Sony WH-1000XM5 / ULT WEAR | Upstream verified | Battery and Off, cancellation, transparency over Sony V2 |
+| Sony WH-1000XM2 / XM4 and selected WF/WI/MDR models | Experimental | V1 or V2 controls only after the device confirms the matching service |
+| OPPO Enco Air5s | Upstream verified | Battery and noise modes for the identified product ID |
+| AirPods / Beats | System-dependent | Off plus the listening modes exposed by macOS, including adaptive when available |
+| Bose QuietComfort, Fast Pair battery | Planned | Not available in this build |
 
-Upstream testing includes Px7 S3, original Px8, Sony WH-1000XM3, and OPPO Enco Air5s. This does not mean every model in the same family is supported.
+Aural selects a model profile by the output name, then waits for the connected
+device to confirm the actual capability. The number of noise-mode controls is
+the number the device reports, not a generic three-way switch.
+
+Sony V2 is selected from the RFCOMM SDP service, not from the marketing model
+name. Apple listening modes come from the BTAudio HAL, so an AirPods mode list
+can contain Off, cancellation, transparency, and adaptive independently of the
+Bowers & Wilkins three-mode profile.
+
+See [Headphone compatibility](docs/HEADPHONE_COMPATIBILITY.md) for the current
+evidence matrix, planned protocols, and the community test-report checklist.
+“Experimental” means the model is recognized but has not been validated on the
+exact hardware in the current build.
 
 ## Install
 

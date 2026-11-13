@@ -13,7 +13,7 @@ struct HeadBridgeProtocolTests {
         #expect(parser.append(bytes.suffix(from: bytes.count / 2)) == [packet])
     }
 
-    @Test func sonyRejectsBadChecksumAndDetectsUnsupportedV2() {
+    @Test func sonyRejectsBadChecksumAndDetectsBothProtocolVersions() {
         let packet = SonyMDRPacket(dataType: SonyMDRPacket.commandType, sequence: 0, payload: [0x10, 0])
         var bytes = Array(SonyMDRFraming.encode(packet))
         bytes[bytes.count - 2] ^= 1
@@ -21,6 +21,32 @@ struct HeadBridgeProtocolTests {
         #expect(SonyMDRProtocolVersion.detect(fromInitReply: [1, 0, 0x40, 0x10]) == .v1)
         #expect(SonyMDRProtocolVersion.detect(fromInitReply: [1, 0, 3, 0, 0, 0, 0, 0]) == .v2)
         #expect(SonyMDRProtocolVersion.detect(fromInitReply: [1, 0]) == nil)
+    }
+
+    @Test func sonyV2NoiseAndBatteryBytesMatchPublishedCapture() throws {
+        let ambient = try #require(SonyV2NoiseCodec.decode(
+            payload: [0x67, 0x17, 0x01, 0x01, 0x01, 0x01, 0x0C],
+            opcode: 0x67
+        ))
+        #expect(ambient.mode == .ambient)
+        #expect(ambient.voice == 0x01)
+        #expect(ambient.level == 0x0C)
+        #expect(SonyV2NoiseCodec.setPayload(mode: .noiseCancellation, current: ambient)
+                == [0x68, 0x17, 0x01, 0x01, 0x00, 0x01, 0x0C])
+        #expect(SonyV2NoiseCodec.setPayload(mode: .off, current: ambient)
+                == [0x68, 0x17, 0x01, 0x00, 0x00, 0x01, 0x0C])
+        #expect(SonyV2NoiseCodec.setPayload(mode: .ambient, current: ambient, ambientLevel: 20)
+                == [0x68, 0x17, 0x01, 0x01, 0x01, 0x01, 0x14])
+        #expect(SonyV2NoiseCodec.setPayload(mode: .windReduction, current: ambient) == nil)
+        #expect(SonyV2NoiseCodec.decode(
+            payload: [0x67, 0x17, 0x01, 0x01, 0x01, 0x00, 0x15],
+            opcode: 0x67
+        ) == nil)
+
+        let battery = try #require(SonyV2BatteryCodec.decode([0x23, 0x00, 0x3C, 0x01]))
+        #expect(battery.level == 60)
+        #expect(battery.isCharging)
+        #expect(SonyV2BatteryCodec.decode([0x23, 0x00, 0x65, 0x00]) == nil)
     }
 
     @Test func sonyNoiseWriteMatchesUpstreamVector() {

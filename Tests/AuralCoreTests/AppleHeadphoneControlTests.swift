@@ -173,6 +173,20 @@ struct AppleHeadphoneControlTests {
         controller.shutdown()
     }
 
+    @Test func appleHeadphoneCanReturnToOffFromAdaptiveMode() async throws {
+        let fixture = AppleControlFixture()
+        fixture.modes[fixture.a.id] = .adaptive
+        let controller = HeadphoneController(appleHardware: fixture.hardware)
+        controller.updateOutput(fixture.a)
+        #expect(controller.supportedNoiseModes == [.off, .cancellation, .transparency, .adaptive])
+        controller.setNoiseMode(.off)
+        try await settle { !controller.busy }
+        #expect(controller.state.noiseMode == .off)
+        #expect(controller.errorMessage == nil)
+        #expect(fixture.writes.map(\.uid) == [fixture.a.uid])
+        controller.shutdown()
+    }
+
     @Test func missingConfirmationFailsWithoutRepeatedWrites() async throws {
         let fixture = AppleControlFixture()
         fixture.confirmWrite = false
@@ -269,7 +283,7 @@ private final class AppleControlFixture {
         }, snapshot: { id in
             self.reads.append(id)
             return AppleHeadphoneSnapshot(noiseMode: self.modes[id] ?? .transparency,
-                                          supportedNoiseModes: [.cancellation, .transparency, .adaptive], wearState: self.wearState)
+                                          supportedNoiseModes: [.off, .cancellation, .transparency, .adaptive], wearState: self.wearState)
         }, requestMode: { mode, output in
             if self.wearState != .bothEars { throw AppleHeadphoneNotWorn() }
             self.writes.append(output)

@@ -25,17 +25,19 @@ struct AppleHeadphoneHALTests {
     @Test func supportMaskExposesOnlyAdvertisedListeningModes() {
         // 原始线值 3 表示当前正在透传；能力位 7 同时公开降噪、透传和自适应。
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 3)
-                == [.cancellation, .transparency, .adaptive])
+                == [.off, .cancellation, .transparency, .adaptive])
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0b101, currentRaw: 2)
-                == [.cancellation, .adaptive])
+                == [.off, .cancellation, .adaptive])
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0, currentRaw: 3).isEmpty)
     }
 
-    @Test func offRequiresPositiveCurrentStateEvidence() {
-        // 能力位图不声明关闭；只有当前确实读到关闭时才允许把它展示为可选项。
+    @Test func offRemainsReachableAfterSwitchingToAnotherMode() {
+        // `lsms` 不声明关闭，但原始值 1 是系统的正式聆听模式。
+        // 只要设备公开了聆听模式，就应保留返回 Off 的入口。
         #expect(AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 1)
                 == [.off, .cancellation, .transparency, .adaptive])
-        #expect(!AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 2).contains(.off))
+        #expect(AppleHeadphoneHAL.supportedModes(mask: 0b111, currentRaw: 2).contains(.off))
+        #expect(AppleHeadphoneHAL.supportedModes(mask: 0, currentRaw: 1) == [.off])
     }
 
     @Test func adaptiveModeHasAnExplicitName() {

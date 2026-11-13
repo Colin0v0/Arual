@@ -25,6 +25,14 @@
 - 许可全文：[ThirdParty/PodsControl/LICENSE](ThirdParty/PodsControl/LICENSE)，随本地 `.app` 一起分发。
 - Aural 仅依据其公开实现确认 BTAudio HAL 的 `lstm`/`lsms` 选择器及 `off=1`、`noise-cancellation=2`、`transparency=3`、`adaptive=4` 线值；Aural 的控制器、无 fallback 错误处理、异步写入与有界回读均为独立实现。
 
+## Sony ULT ctl — MIT
+
+- 仓库：https://github.com/Leonard013/sony-ult-ctl
+- 固定来源提交：`1909b85527df1e5fffffee0b7e011e86f9d111e0`
+- Copyright (c) 2026 Leonard013
+- 许可全文：[ThirdParty/SonyULTCtl/LICENSE](ThirdParty/SonyULTCtl/LICENSE)，随本地 `.app` 一起分发。
+- Aural 采用其公开记录的 Sony V2 噪声控制 `66/67/68/69 17` 布局、`0x22/0x23` 电池查询和 ULT WEAR 实测结果；没有复制其 Python UI、RFCOMM 连接管理器或命令行工具。
+
 ## FineTune：实现研究（不包含源代码）
 
 - 仓库：https://github.com/ronitsingh10/FineTune
@@ -48,8 +56,8 @@
 |---|---|---|
 | Sources/AuralCore/HeadphoneModels.swift | Core/HeadphoneProvider.swift、Providers/BowersWilkins/BowersWilkinsProvider.swift | 复用厂商家族预筛选、LE_BWHP 通用广播规则与原代 Px8 ANC 线值；不复制 RSSI 后备选择 |
 | Sources/AuralCore/HeadBridge/Sony/SonyMDRProtocol.swift | Providers/Sony/SonyMDRProtocol.swift | 保留帧、解析器、型号线值与能力表 |
-| Sources/AuralCore/HeadBridge/Sony/SonyRFCOMMTransport.swift | Providers/Sony/SonyRFCOMMTransport.swift | 加入真实系统输出 UID 检查与可恢复传输错误分类，不在 V1 失败后尝试 V2 |
-| Sources/AuralCore/HeadBridge/Sony/SonyV1Client.swift | Providers/Sony/SonyV1Client.swift | 保留 ACK/命令队列/响应解码；删除超时即认定初始化或就绪的分支及静默跳过超时命令；只请求基础状态；增加发送/验证事件与输出绑定 |
+| Sources/AuralCore/HeadBridge/Sony/SonyRFCOMMTransport.swift | Providers/Sony/SonyRFCOMMTransport.swift | 加入真实系统输出 UID 检查、可恢复传输错误分类，并依据 SDP 服务选择 V1/V2 |
+| Sources/AuralCore/HeadBridge/Sony/SonyV1Client.swift | Providers/Sony/SonyV1Client.swift | 保留 ACK/命令队列/响应解码；共享 V1/V2 传输生命周期，增加 V2 初始查询、回读和发送/验证事件；不静默跳过超时命令 |
 | Sources/AuralCore/HeadBridge/OPPO/OppoProtocol.swift | Providers/OPPO/OppoProtocol.swift | 保留基础帧、解析器、产品 ID/电量/噪声映射；类型接入 Aural，移除未使用的高级状态/响铃功能 |
 | Sources/AuralCore/HeadBridge/OPPO/OppoRFCOMMTransport.swift | Providers/OPPO/OppoRFCOMMTransport.swift | 加入真实输出绑定与可恢复传输错误分类 |
 | Sources/AuralCore/HeadBridge/TransportSupport.swift | Providers/BowersWilkins/BowersWilkinsProvider.swift 的 TransportLogEntry.Direction | 仅保留日志方向接口，其余为 Aural 的输出检查 |

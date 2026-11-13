@@ -38,6 +38,8 @@ final class SonyRFCOMMTransport: NSObject {
     ]
 
     private(set) var status: SonyRFCOMMStatus = .idle
+    /// SDP 记录决定 Wire dialect；初始化回包仍要再次核对版本。
+    private(set) var protocolVersion: SonyMDRProtocolVersion?
     private var boundOutputUID: String?
     private var device: IOBluetoothDevice?
     private var channel: IOBluetoothRFCOMMChannel?
@@ -125,6 +127,7 @@ final class SonyRFCOMMTransport: NSObject {
         generation &+= 1
         openTimeoutTask?.cancel()
         openTimeoutTask = nil
+        protocolVersion = nil
 
         let oldChannel = channel
         channel = nil
@@ -141,11 +144,17 @@ final class SonyRFCOMMTransport: NSObject {
 
     @discardableResult
     private func findServiceAndOpen(on device: IOBluetoothDevice) -> Bool {
-        guard let record = serviceRecord(on: device, uuidBytes: Self.v1ServiceUUIDBytes) else {
-            if serviceRecord(on: device, uuidBytes: Self.v2ServiceUUIDBytes) != nil {
-                fail("Sony MDR V2 detected; this build currently implements the V1 protocol adapter")
-                return true
-            }
+        // 上游 macOS 客户端先检查 legacy 服务，存在则走 V1；否则才把新服务
+        // 识别为 V2。不能仅凭型号名选择协议，同一个型号的不同批次也会变化。
+        let selected: ([UInt8], SonyMDRProtocolVersion)?
+        if let _ = serviceRecord(on: device, uuidBytes: Self.v1ServiceUUIDBytes) {
+            selected = (Self.v1ServiceUUIDBytes, .v1)
+        } else if let _ = serviceRecord(on: device, uuidBytes: Self.v2ServiceUUIDBytes) {
+            selected = (Self.v2ServiceUUIDBytes, .v2)
+        } else {
+            selected = nil
+        }
+        guard let selected, let record = serviceRecord(on: device, uuidBytes: selected.0) else {
             return false
         }
 
@@ -165,6 +174,7 @@ final class SonyRFCOMMTransport: NSObject {
             fail("Could not open Sony RFCOMM channel (\(result))")
             return true
         }
+        protocolVersion = selected.1
         channel = openedChannel
         return true
     }
@@ -188,6 +198,7 @@ final class SonyRFCOMMTransport: NSObject {
         requestedDisconnect = false
         openTimeoutTask?.cancel()
         openTimeoutTask = nil
+        protocolVersion = nil
         let oldChannel = channel
         channel = nil
         oldChannel?.setDelegate(nil)
@@ -246,6 +257,7 @@ final class SonyRFCOMMTransport: NSObject {
         guard let closedChannel, closedChannel === channel else { return }
         channel = nil
         device = nil
+        protocolVersion = nil
         generation &+= 1
         openTimeoutTask?.cancel()
         openTimeoutTask = nil

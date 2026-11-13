@@ -1,5 +1,6 @@
 // Derived from HeadBridge (MIT), Copyright (c) 2026 HeadBridge contributors.
 // Upstream: 5e577cb4a91a515b95596fcc4b362a86ecb639a5
+// V2 transport/queries adapted from Leonard013/sony-ult-ctl (MIT), commit 1909b85.
 // 完整许可见 ThirdParty/HeadBridge/LICENSE；Aural 仅接入已确认的电量和噪声控制。
 import Foundation
 import IOBluetooth
@@ -12,11 +13,11 @@ enum SonyV1ClientConnectionState: Equatable {
     case failed(String, retryable: Bool = false)
 }
 
-/// Pure Swift Sony MDR V1 client.
+/// Pure Swift Sony MDR V1/V2 client.
 ///
-/// The client is deliberately event-driven. RFCOMM callbacks feed the parser,
-/// every device packet is acknowledged immediately, and outgoing commands use
-/// one stop-and-wait queue. There is no background polling loop.
+/// V1 与 V2 共用同一套 RFCOMM 帧、ACK 和有界停止等待队列；协议版本只影响
+/// 初始查询和功能载荷，不能各自复制一套连接生命周期。RFCOMM 回调喂给解析器，
+/// 每个设备包立即 ACK，后台不运行轮询循环。
 @MainActor
 final class SonyV1Client {
     var onConnectionStateChange: ((SonyV1ClientConnectionState) -> Void)?
@@ -48,9 +49,12 @@ final class SonyV1Client {
 
     private(set) var connectionState: SonyV1ClientConnectionState = .disconnected
     private(set) var state = SonyV1State()
+    private(set) var protocolVersion: SonyMDRProtocolVersion?
 
     private var deviceName = "Sony Headphones"
     private var profile = SonyV1DeviceProfile(deviceName: "Sony Headphones")
+    /// V2 设置命令必须带上次真实回读的完整字段；没有回读就不发送 SET。
+    private var v2NoiseReading: SonyV2NoiseReading?
     private var commandQueue: [QueuedCommand] = []
     private var inFlight: InFlightCommand?
     private var nextSequence: UInt8 = 0
@@ -102,12 +106,39 @@ final class SonyV1Client {
     }
 
     func refreshBattery() {
-        guard handshakeComplete, transport.status == .connected else { return }
-        enqueue([SonyV1Opcode.batteryGet, 0x00], label: "Battery sample")
+        guard handshakeComplete, transport.status == .connected,
+              let protocolVersion
+        else { return }
+        switch protocolVersion {
+        case .v2:
+            enqueue(SonyV2BatteryCodec.getPayload, label: "V2 battery sample")
+        case .v1:
+            enqueue([SonyV1Opcode.batteryGet, 0x00], label: "Battery sample")
+        }
     }
 
     func setNoiseMode(_ mode: SonyV1NoiseMode, ambientLevel: Int? = nil) {
-        guard connectionState == .ready else { return }
+        guard connectionState == .ready, let protocolVersion else { return }
+        if protocolVersion == .v2 {
+            guard let current = v2NoiseReading,
+                  let payload = SonyV2NoiseCodec.setPayload(
+                    mode: mode,
+                    current: current,
+                    ambientLevel: ambientLevel
+                  )
+            else { return }
+            enqueue(
+                payload,
+                label: "V2 NCASM set \(String(describing: mode))",
+                coalescingKey: "noise-set",
+                onSent: { [weak self] in self?.onNoiseSetSent?() }
+            ) { [weak self] in
+                self?.enqueue(SonyV2NoiseCodec.getPayload, label: "V2 NCASM verify",
+                              onSent: { [weak self] in self?.onNoiseVerificationSent?() })
+            }
+            return
+        }
+
         let payload = profile.noisePayload(
             mode: mode,
             ambientLevel: ambientLevel ?? state.ambientLevel,
@@ -128,8 +159,28 @@ final class SonyV1Client {
     }
 
     func setAmbientLevel(_ level: Int) {
-        guard connectionState == .ready else { return }
+        guard connectionState == .ready, let protocolVersion else { return }
         let desiredLevel = min(20, max(1, level))
+
+        if protocolVersion == .v2 {
+            guard let current = v2NoiseReading,
+                  let payload = SonyV2NoiseCodec.setPayload(
+                    mode: .ambient,
+                    current: current,
+                    ambientLevel: desiredLevel
+                  )
+            else { return }
+            enqueue(
+                payload,
+                label: "V2 NCASM ambient level \(desiredLevel)",
+                coalescingKey: "noise-set",
+                onSent: { [weak self] in self?.onNoiseSetSent?() }
+            ) { [weak self] in
+                self?.enqueue(SonyV2NoiseCodec.getPayload, label: "V2 NCASM verify",
+                              onSent: { [weak self] in self?.onNoiseVerificationSent?() })
+            }
+            return
+        }
 
         let payload = profile.noisePayload(
             mode: .ambient,
@@ -263,8 +314,9 @@ final class SonyV1Client {
         }
     }
 
-    private func completeHandshake() {
+    private func completeHandshake(version: SonyMDRProtocolVersion) {
         guard !handshakeComplete else { return }
+        protocolVersion = version
         handshakeComplete = true
         handshakeDeadlineTask?.cancel()
         handshakeDeadlineTask = nil
@@ -279,13 +331,20 @@ final class SonyV1Client {
                 self.transport.status == .connected,
                 self.connectionState == .connecting
             else { return }
-            self.fail("Sony 初始电量读取超时，未确认控制就绪", retryable: true)
+            self.fail("Sony 初始状态读取超时，未确认控制就绪", retryable: true)
         }
     }
 
     private func enqueueInitialQueries() {
-        guard !initialQueriesQueued else { return }
+        guard !initialQueriesQueued, let protocolVersion else { return }
         initialQueriesQueued = true
+
+        if protocolVersion == .v2 {
+            // V2 不发送 V1 型号/编解码器查询；只使用已确认的服务和线值。
+            enqueue(SonyV2BatteryCodec.getPayload, label: "V2 battery get")
+            enqueue(SonyV2NoiseCodec.getPayload, label: "V2 NCASM get")
+            return
+        }
 
         enqueue([SonyV1Opcode.modelGet, 0x01], label: "Model get")
         enqueue([SonyV1Opcode.batteryGet, 0x00], label: "Battery get")
@@ -301,6 +360,13 @@ final class SonyV1Client {
     }
 
     private func enqueueStateQueries() {
+        guard let protocolVersion else { return }
+        if protocolVersion == .v2 {
+            enqueue(SonyV2BatteryCodec.getPayload, label: "V2 battery refresh")
+            enqueue(SonyV2NoiseCodec.getPayload, label: "V2 NCASM refresh")
+            return
+        }
+
         enqueue([SonyV1Opcode.batteryGet, 0x00], label: "Battery refresh")
         enqueue([SonyV1Opcode.codecGet, 0x00], label: "Codec refresh")
         enqueue([SonyV1Opcode.noiseGet, 0x02], label: "NCASM refresh")
@@ -334,7 +400,17 @@ final class SonyV1Client {
     }
 
     private func markReady() {
-        guard transport.status == .connected, handshakeComplete, state.batteryPercent != nil else { return }
+        guard transport.status == .connected, handshakeComplete else { return }
+        // V1 的 ready 以真实电量为准；V2 的电池回包可能缺失，但噪声状态必须
+        // 已经成功解析，不能只凭初始化回包启用控制。
+        switch protocolVersion {
+        case .v1:
+            guard state.batteryPercent != nil else { return }
+        case .v2:
+            guard state.noiseMode != nil else { return }
+        case nil:
+            return
+        }
         initialReadDeadlineTask?.cancel()
         initialReadDeadlineTask = nil
         updateConnectionState(.ready)
@@ -475,17 +551,20 @@ final class SonyV1Client {
                 fail("Unrecognized Sony MDR init reply")
                 return
             }
-            guard version == .v1 else {
-                fail("Sony MDR V2 requires the V2 protocol adapter")
+            guard transport.protocolVersion == version else {
+                fail("Sony SDP 服务与初始化回包版本不一致")
                 return
             }
-            completeHandshake()
+            completeHandshake(version: version)
 
         case SonyV1Opcode.modelReturn:
             parseModel(payload)
 
         case SonyV1Opcode.batteryReturn, SonyV1Opcode.batteryNotify:
             parseBattery(payload)
+
+        case SonyV2Opcode.batteryReturn:
+            parseV2Battery(payload)
 
         case SonyV1Opcode.codecReturn, SonyV1Opcode.codecNotify:
             parseCodec(payload)
@@ -542,6 +621,16 @@ final class SonyV1Client {
         publishState()
     }
 
+    private func parseV2Battery(_ payload: [UInt8]) {
+        guard protocolVersion == .v2,
+              let reading = SonyV2BatteryCodec.decode(payload)
+        else { return }
+        state.batteryPercent = reading.level
+        state.isCharging = reading.isCharging
+        markReady()
+        publishState()
+    }
+
     private func parseCodec(_ payload: [UInt8]) {
         guard payload.count >= 3, payload[1] == 0x00 else { return }
         state.codecName =
@@ -557,6 +646,24 @@ final class SonyV1Client {
     }
 
     private func parseNoiseControl(_ payload: [UInt8]) {
+        guard let protocolVersion else { return }
+        if protocolVersion == .v2 {
+            guard let reading = SonyV2NoiseCodec.decode(
+                payload: payload,
+                opcode: payload.first ?? 0
+            ) else { return }
+            v2NoiseReading = reading
+            state.noiseMode = reading.mode
+            state.windReductionSupported = false
+            if reading.mode == .ambient {
+                state.ambientLevel = Int(reading.level)
+            }
+            markReady()
+            publishState()
+            onNoiseModeRead?(reading.mode)
+            return
+        }
+
         guard payload.count >= 8, payload[1] == 0x02 else { return }
         let effect = payload[2]
         reportedNCType = payload[3]
@@ -704,6 +811,8 @@ final class SonyV1Client {
         parser.reset()
         handshakeComplete = false
         initialQueriesQueued = false
+        protocolVersion = nil
+        v2NoiseReading = nil
         reportedNCType = 0x02
         reportedASMType = 0x01
         reportedASMID = 0x00

@@ -96,10 +96,14 @@ public enum AppleHeadphoneHAL {
         wearState(primary: primary, secondary: secondary).isWorn
     }
 
-    /// 能力位图不声明“关闭”模式；只有设备当前确实处于关闭时才把关闭加入可选项。
+    /// Apple 的 `lsms` 只声明降噪相关模式，不声明“关闭”（Allow Off）。
+    ///
+    /// 对公开了聆听模式的设备，关闭始终是系统提供的原始模式 1。这里不能在
+    /// 当前处于其他模式时漏掉关闭，否则用户只能单方向切走，无法再切回 Off。
+    /// 没有任何聆听模式能力且当前值也不是 Off 时，仍保持空列表，不凭空启用控制。
     static func supportedModes(mask: UInt32, currentRaw: UInt32) -> [NoiseMode] {
         var modes: Set<NoiseMode> = []
-        if currentRaw == 1 { modes.insert(.off) }
+        if currentRaw == 1 || mask != 0 { modes.insert(.off) }
         if mask & 0b001 != 0 { modes.insert(.cancellation) }
         if mask & 0b010 != 0 { modes.insert(.transparency) }
         if mask & 0b100 != 0 { modes.insert(.adaptive) }

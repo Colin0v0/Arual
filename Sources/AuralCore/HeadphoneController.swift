@@ -15,7 +15,7 @@ public struct HeadphoneReadings: Equatable {
 }
 
 /// 统一界面状态，不把厂商协议混成一套“通用指令”。
-/// B&W 走 BLE RPC；Sony MDR V1 与 OPPO Enco 分别使用上游的唯一 RFCOMM 服务。
+/// B&W 走 BLE RPC；Sony MDR V1/V2 与 OPPO Enco 分别使用已确认的 RFCOMM 服务。
 @MainActor
 public final class HeadphoneController: ObservableObject {
     @Published public private(set) var phase: HeadphonePhase = .idle
@@ -25,6 +25,8 @@ public final class HeadphoneController: ObservableObject {
     @Published public private(set) var identityVerified = false
     @Published public private(set) var pendingNoiseMode: NoiseMode?
     @Published public private(set) var supportedNoiseModes: [NoiseMode] = []
+    @Published public private(set) var capabilities = HeadphoneCapabilities.none
+    @Published public private(set) var modelProfile: HeadphoneModelProfile?
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var diagnosticLines: [String] = []
     @Published public private(set) var family: HeadphoneFamily?
@@ -98,16 +100,29 @@ public final class HeadphoneController: ObservableObject {
             isAwaitingWear = false
             family = newFamily
             displayName = target?.name ?? "耳机"
+            modelProfile = if let target, let newFamily {
+                HeadphoneModelCatalog.profile(for: target.name, family: newFamily)
+            } else {
+                nil
+            }
             errorMessage = nil
             diagnosticLines = []
             classicPolicy.updateOutput(target?.uid)
             phase = .idle
+            clearCapabilities()
         } else {
             // 同一副耳机的 HAL ID/名称可随通话模式变化。Apple 必须废弃旧 HAL 写任务；
             // B&W/Sony/OPPO 的物理控制连接绑定 UID，更新音频句柄即可，不无故断开 BLE/RFCOMM。
             output = target
             let name = target?.name ?? "耳机"
-            if displayName != name { displayName = name }
+            if displayName != name {
+                displayName = name
+                modelProfile = if let target, let family {
+                    HeadphoneModelCatalog.profile(for: target.name, family: family)
+                } else {
+                    nil
+                }
+            }
         }
         bowersWilkins.setRouteAuthorization(isRouteAuthorized)
         guard !suspended, !shuttingDown else { return }
@@ -185,7 +200,7 @@ public final class HeadphoneController: ObservableObject {
         else if family == .apple {
             cancelAppleOperation()
             state = HeadphoneReadings()
-            supportedNoiseModes = []
+            clearCapabilities()
             boundOutputUID = nil
             identityVerified = false
             errorMessage = nil
@@ -289,7 +304,7 @@ public final class HeadphoneController: ObservableObject {
             isReconnecting = false
             candidates = []
             state = HeadphoneReadings()
-            supportedNoiseModes = []
+            clearCapabilities()
             boundOutputUID = nil
             identityVerified = false
             pendingNoiseMode = nil
@@ -300,7 +315,7 @@ public final class HeadphoneController: ObservableObject {
         if let bound = bowersWilkins.boundOutputUID, bound != output?.uid {
             // 旧 BLE 连接的取消确认可能稍晚返回，不能把旧耳机读数挂到新目标名称下。
             state = HeadphoneReadings()
-            supportedNoiseModes = []
+            clearCapabilities()
             boundOutputUID = nil
             identityVerified = false
             pendingNoiseMode = nil
@@ -316,7 +331,15 @@ public final class HeadphoneController: ObservableObject {
         errorMessage = bowersWilkins.errorMessage
         pendingNoiseMode = bowersWilkins.pendingNoiseMode
         diagnosticLines = bowersWilkins.diagnosticLines
-        supportedNoiseModes = state.noiseMode == nil ? [] : [.off, .cancellation, .transparency]
+        let noiseModes = resolvedProfileNoiseModes(
+            protocolModes: [.off, .cancellation, .transparency]
+        )
+        updateCapabilities(
+            battery: state.battery == nil ? nil : batteryCapabilityForDriver,
+            noise: state.noiseMode.map {
+                HeadphoneNoiseCapability(modes: noiseModes, currentMode: $0)
+            }
+        )
         isReconnecting = bowersWilkins.isReconnecting
     }
 
@@ -348,7 +371,13 @@ public final class HeadphoneController: ObservableObject {
             trace("APPLE BATTERY ERROR \(error.localizedDescription)")
         }
         state = readings
-        supportedNoiseModes = snapshot.supportedNoiseModes
+        updateCapabilities(
+            battery: readings.battery == nil ? nil : .earbudsWithCase,
+            noise: HeadphoneNoiseCapability(
+                modes: snapshot.supportedNoiseModes,
+                currentMode: snapshot.noiseMode
+            )
+        )
         boundOutputUID = output.uid
         identityVerified = true
         errorMessage = nil
@@ -438,7 +467,7 @@ public final class HeadphoneController: ObservableObject {
         appleNeedsRetry = true
         cancelAppleOperation()
         state = HeadphoneReadings()
-        supportedNoiseModes = []
+        clearCapabilities()
         boundOutputUID = nil
         identityVerified = false
         errorMessage = message
@@ -475,7 +504,7 @@ public final class HeadphoneController: ObservableObject {
             errorMessage = nil
             phase = .connecting
             state = HeadphoneReadings()
-            supportedNoiseModes = []
+            clearCapabilities()
             trace("CONNECT \(family!.rawValue) FROM CORE AUDIO ADDRESS")
             if family == .sony { sony.connect(address: bytes.joined(separator: ":"), deviceName: output.name, outputUID: output.uid) }
             else { oppo.connect(address: bytes.joined(separator: ":"), outputUID: output.uid) }
@@ -494,7 +523,7 @@ public final class HeadphoneController: ObservableObject {
         sequence = 1
         state = HeadphoneReadings()
         candidates = []
-        supportedNoiseModes = []
+        clearCapabilities()
         boundOutputUID = nil
         identityVerified = false
         pendingNoiseMode = nil
@@ -545,12 +574,28 @@ public final class HeadphoneController: ObservableObject {
     private func sonyReadingsChanged(_ reading: SonyV1State) {
         guard family == .sony, !stopping else { return }
         state.battery = reading.batteryPercent
+        var noise: HeadphoneNoiseCapability?
         if let mode = reading.noiseMode {
             let actual = Self.noiseMode(from: mode)
             state.noiseMode = actual
-            supportedNoiseModes = [.off, .cancellation, .transparency]
-            if reading.windReductionSupported { supportedNoiseModes.append(.windReduction) }
+            var protocolModes: [NoiseMode] = [.off, .cancellation, .transparency]
+            if reading.windReductionSupported {
+                protocolModes.append(.windReduction)
+            }
+            let modes = resolvedProfileNoiseModes(
+                protocolModes: protocolModes,
+                confirmedOptionalModes: reading.windReductionSupported ? [.windReduction] : []
+            )
+            noise = HeadphoneNoiseCapability(
+                modes: modes,
+                currentMode: actual,
+                ambientLevelRange: 1...20
+            )
         }
+        updateCapabilities(
+            battery: reading.batteryPercent == nil ? nil : batteryCapabilityForDriver,
+            noise: noise
+        )
     }
 
     private static func noiseMode(from mode: SonyV1NoiseMode) -> NoiseMode {
@@ -607,7 +652,18 @@ public final class HeadphoneController: ObservableObject {
                 identityVerified = true
                 classicPolicy.confirmedConnection()
             }
-            supportedNoiseModes = oppoProfile != nil && state.noiseMode != nil ? [.off, .cancellation, .transparency] : []
+            let oppoNoiseModes: [NoiseMode] = if let oppoProfile {
+                [.off, .cancellation, .transparency].filter { oppoProfile.noiseBits[$0] != nil }
+            } else {
+                []
+            }
+            updateCapabilities(
+                battery: state.battery == nil ? nil : batteryCapabilityForDriver,
+                noise: state.noiseMode.flatMap { currentMode in
+                    guard !oppoNoiseModes.isEmpty else { return nil }
+                    return HeadphoneNoiseCapability(modes: oppoNoiseModes, currentMode: currentMode)
+                }
+            )
         }
     }
 
@@ -637,6 +693,38 @@ public final class HeadphoneController: ObservableObject {
         guard !stopping else { return }
         diagnosticLines.append(line)
         if diagnosticLines.count > 80 { diagnosticLines.removeFirst(diagnosticLines.count - 80) }
+    }
+
+    /// 能力和模式列表只通过这一个入口发布，避免界面状态与诊断状态分叉。
+    private func updateCapabilities(
+        battery: HeadphoneBatteryCapability?,
+        noise: HeadphoneNoiseCapability?
+    ) {
+        let next = HeadphoneCapabilities(battery: battery, noise: noise)
+        capabilities = next
+        supportedNoiseModes = next.noiseModes
+    }
+
+    private func clearCapabilities() {
+        updateCapabilities(battery: nil, noise: nil)
+    }
+
+    /// 电量形状属于驱动契约，不由型号名猜测。
+    private var batteryCapabilityForDriver: HeadphoneBatteryCapability? {
+        switch family {
+        case .apple: return .earbudsWithCase
+        case .bowersWilkins, .sony, .oppo: return .single
+        case nil: return nil
+        }
+    }
+
+    /// 型号表负责档数，协议回包负责证明控制通道确实存在。
+    private func resolvedProfileNoiseModes(
+        protocolModes: [NoiseMode],
+        confirmedOptionalModes: Set<NoiseMode> = []
+    ) -> [NoiseMode] {
+        guard let modelProfile else { return protocolModes }
+        return modelProfile.resolvedNoiseModes(confirmedOptionalModes: confirmedOptionalModes)
     }
 
     private func armDeadline(seconds: TimeInterval, action: @escaping @MainActor (HeadphoneController) -> Void) {

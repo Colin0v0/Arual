@@ -1,5 +1,6 @@
 // Derived from HeadBridge (MIT), Copyright (c) 2026 HeadBridge contributors.
 // Upstream: 5e577cb4a91a515b95596fcc4b362a86ecb639a5
+// Sony V2 noise/battery wire facts cross-checked with Leonard013/sony-ult-ctl (MIT).
 // 完整许可见 ThirdParty/HeadBridge/LICENSE；Aural 仅接入已确认的电量和噪声控制。
 import Foundation
 
@@ -204,6 +205,16 @@ enum SonyV1Opcode {
     static let systemSettingNotify: UInt8 = 0xF9
 }
 
+/// Sony V2 的电池和噪声控制使用独立线值。
+///
+/// V1 中 `0x22` 是关机命令，因此只能在 SDP 服务和初始化回包都已经确认 V2
+/// 后发送这里的电池查询，绝不能把 V1 设备当作 V2 探测。
+enum SonyV2Opcode {
+    static let batteryGet: UInt8 = 0x22
+    static let batteryReturn: UInt8 = 0x23
+    static let noiseInquiry: UInt8 = 0x17
+}
+
 enum SonyV1NoiseMode: Equatable, Sendable {
     case off
     case noiseCancellation
@@ -221,6 +232,101 @@ enum SonyV1NoiseMode: Equatable, Sendable {
         if ncValue != 0x00 { return .noiseCancellation }
         if (1...20).contains(ambientLevel) { return .ambient }
         return .off
+    }
+}
+
+/// V2 的噪声状态必须保留完整的设备原始字段。
+///
+/// 设置单个模式时，未修改的 voice/level 要按设备回读值原样带回，不能自行
+/// 拼一个固定字节串；这样不会因为切换降噪而意外改变环境声等级或语音增强。
+struct SonyV2NoiseReading: Equatable, Sendable {
+    let effect: UInt8
+    let settingType: UInt8
+    let voice: UInt8
+    let level: UInt8
+
+    var mode: SonyV1NoiseMode {
+        guard effect != 0 else { return .off }
+        return settingType == 0x01 ? .ambient : .noiseCancellation
+    }
+}
+
+enum SonyV2NoiseCodec {
+    static let getPayload: [UInt8] = [SonyV1Opcode.noiseGet, SonyV2Opcode.noiseInquiry]
+
+    /// `67 17 01 <effect> <settingType> <voice> <level>`。
+    /// 任何字段越界都拒绝整条回包，不猜测设备意图。
+    static func decode(payload: [UInt8], opcode: UInt8) -> SonyV2NoiseReading? {
+        guard payload.count == 7,
+              payload[0] == opcode,
+              payload[1] == SonyV2Opcode.noiseInquiry,
+              payload[2] == 0x01,
+              payload[3] <= 0x01,
+              payload[4] <= 0x01,
+              payload[5] <= 0x01,
+              payload[6] <= 20
+        else { return nil }
+        return SonyV2NoiseReading(
+            effect: payload[3],
+            settingType: payload[4],
+            voice: payload[5],
+            level: payload[6]
+        )
+    }
+
+    /// 只支持已经由型号/协议确认的三种基础模式。
+    ///
+    /// 抗风噪和自适应属于其他协议族，不能在这里伪造写入映射。
+    static func setPayload(
+        mode: SonyV1NoiseMode,
+        current: SonyV2NoiseReading,
+        ambientLevel: Int? = nil
+    ) -> [UInt8]? {
+        let effect: UInt8
+        let settingType: UInt8
+        let level: UInt8
+
+        switch mode {
+        case .off:
+            effect = 0x00
+            settingType = 0x00
+            level = current.level
+        case .noiseCancellation:
+            effect = 0x01
+            settingType = 0x00
+            level = current.level
+        case .ambient:
+            effect = 0x01
+            settingType = 0x01
+            level = UInt8(clamping: min(20, max(1, ambientLevel ?? Int(current.level))))
+        case .windReduction:
+            return nil
+        }
+
+        return [
+            SonyV1Opcode.noiseSet,
+            SonyV2Opcode.noiseInquiry,
+            0x01,
+            effect,
+            settingType,
+            current.voice,
+            level,
+        ]
+    }
+}
+
+enum SonyV2BatteryCodec {
+    static let getPayload: [UInt8] = [SonyV2Opcode.batteryGet, 0x00]
+
+    /// V2 电池回包：`23 00 <0...100> <0/1 charging>`。
+    static func decode(_ payload: [UInt8]) -> (level: Int, isCharging: Bool)? {
+        guard payload.count >= 4,
+              payload[0] == SonyV2Opcode.batteryReturn,
+              payload[1] == 0x00,
+              (0...100).contains(Int(payload[2])),
+              payload[3] <= 0x01
+        else { return nil }
+        return (Int(payload[2]), payload[3] == 0x01)
     }
 }
 

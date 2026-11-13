@@ -37,6 +37,10 @@ enum HeadphoneDiagnostic {
                     result["noiseMode"] = controller.state.noiseMode.map { $0.rawValue as Any } ?? NSNull()
                     result["family"] = controller.family?.rawValue
                     result["supportedNoiseModes"] = controller.supportedNoiseModes.map(\.rawValue)
+                    result["noiseModeCount"] = controller.capabilities.noiseModeCount
+                    result["batteryCapability"] = controller.capabilities.battery?.rawValue
+                    result["modelProfile"] = controller.modelProfile?.id
+                    result["compatibility"] = controller.modelProfile?.compatibility.rawValue
                     result["boundOutputUID"] = controller.boundOutputUID
                     code = 0
                     break
