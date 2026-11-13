@@ -10,6 +10,7 @@ final class StatusPanelController: NSObject {
     private let statusItem: NSStatusItem
     private let model: AppModel
     private var settingsWindow: SettingsWindow?
+    private lazy var applicationAudioEffectWindowController = ApplicationAudioEffectWindowController(model: model)
     private var audioPermissionMonitor: AudioCapturePermissionMonitor?
     private let popupLayout = PanelPresentationLayout()
     private let popupSizeAnimator = PanelSizeAnimator()
@@ -49,6 +50,10 @@ final class StatusPanelController: NSObject {
         let host = NSHostingController(rootView: StatusPopupSurface { [weak self] in
             AudioPanel(model: model, layout: layout, openSettings: { [weak self] in
                 self?.showSettings()
+            }, openApplicationAudioEffects: { [weak self] applicationID, appName, applicationURL in
+                self?.showApplicationAudioEffects(applicationID: applicationID,
+                                                  appName: appName,
+                                                  applicationURL: applicationURL)
             }, panelSizeChanged: { [weak self] size in
                 self?.updatePopupSize(size)
             }, surface: .popover)
@@ -143,6 +148,17 @@ final class StatusPanelController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         // 激活后清除系统自动选中的首个控件，仍允许用户主动使用 Tab 导航。
         settingsWindow?.makeFirstResponder(nil)
+    }
+
+    /// 应用音效不再使用主面板 Popover；独立窗口由同一个控制器强持有，避免播放列表刷新时窗口被释放。
+    private func showApplicationAudioEffects(applicationID: String, appName: String,
+                                             applicationURL: URL?) {
+        hidePopup()
+        applicationAudioEffectWindowController.show(
+            applicationID: applicationID,
+            appName: appName,
+            applicationURL: applicationURL
+        )
     }
 
     private func updatePopupSize(_ size: CGSize) {
@@ -300,6 +316,7 @@ final class StatusPanelController: NSObject {
     private func updateSettingsWindowTitle() {
         settingsWindow?.title = settingsWindowTitle
     }
+
 }
 
 extension StatusPanelController: NSWindowDelegate {

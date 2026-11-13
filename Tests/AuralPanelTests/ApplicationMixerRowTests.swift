@@ -32,6 +32,20 @@ struct ApplicationMixerRowTests {
         #expect(image.size.height <= 46)
     }
 
+    @Test @MainActor func effectAndRoutingButtonsShareOneCompactRow() throws {
+        let speaker = AudioOutput(id: 1, uid: "speaker", name: "扬声器",
+                                  transport: kAudioDeviceTransportTypeBuiltIn)
+        let headphones = AudioOutput(id: 2, uid: "headphones", name: "耳机",
+                                     transport: kAudioDeviceTransportTypeBluetooth)
+        let image = try renderRow(state: ApplicationMixState(), level: 0.5,
+                                  effectsAvailable: true,
+                                  audioEffect: AppAudioEffectSettings(enabled: true, preset: .music),
+                                  routingEnabled: true,
+                                  audioRoute: .allOutputs,
+                                  routeOutputs: [speaker, headphones])
+        #expect(image.size.height <= 46)
+    }
+
     @Test @MainActor func hoverStateRendersAroundTheWholeApplicationRow() throws {
         var state = ApplicationMixState()
         state.enable(outputUID: "test-output")
@@ -56,10 +70,27 @@ struct ApplicationMixerRowTests {
         try png.write(to: URL(fileURLWithPath: "/tmp/aural-application-row-hover-light.png"))
     }
 
+    @Test @MainActor func effectRowOpensAWindowInsteadOfPresentingAPopover() throws {
+        var opened = false
+        let image = try renderRow(
+            state: ApplicationMixState(),
+            level: 0.4,
+            effectsAvailable: true,
+            audioEffect: AppAudioEffectSettings(enabled: true, preset: .music),
+            openApplicationAudioEffects: { opened = true }
+        )
+        #expect(image.size.height <= 46)
+        // 应用行只保留紧凑按钮；十段控制点和预设管理由窗口测试单独验收。
+        #expect(!opened)
+    }
+
     @MainActor private func renderRow(state: ApplicationMixState, level: Float?,
+                                      effectsAvailable: Bool = false,
+                                      audioEffect: AppAudioEffectSettings = .disabled,
                                       routingEnabled: Bool = false,
                                       audioRoute: AppAudioRoute = .allOutputs,
-                                      routeOutputs: [AudioOutput] = []) throws -> NSImage {
+                                      routeOutputs: [AudioOutput] = [],
+                                      openApplicationAudioEffects: @escaping () -> Void = {}) throws -> NSImage {
         // 明确的测试夹具，不进入产品数据源，不请求权限或建立 tap。
         let app = try #require(applicationFixture())
         let levelSource = ApplicationLevelSource()
@@ -69,6 +100,10 @@ struct ApplicationMixerRowTests {
                                       awaitingStream: false,
                                       status: "测试布局", toggleMute: {}, setGain: { _ in },
                                       retryMeter: {}, applyConfiguration: {}, stopManaging: {},
+                                      effectsAvailable: effectsAvailable,
+                                      audioEffect: audioEffect,
+                                      updateAudioEffect: { _ in },
+                                      openApplicationAudioEffects: openApplicationAudioEffects,
                                       routingEnabled: routingEnabled,
                                       audioRoute: audioRoute,
                                       routeOutputs: routeOutputs)
@@ -101,7 +136,8 @@ struct ApplicationMixerRowTests {
             view.subviews.forEach(validateControls)
         }
         validateControls(host)
-        #expect(actionCount == (routingEnabled ? 2 : 1))
+        let expectedActionCount = 1 + (effectsAvailable ? 1 : 0) + (routingEnabled ? 1 : 0)
+        #expect(actionCount == expectedActionCount)
         #expect(routingMenuCount == (routingEnabled ? 1 : 0))
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -121,4 +157,5 @@ struct ApplicationMixerRowTests {
             records: [], executableURLs: [:]
         ).first
     }
+
 }

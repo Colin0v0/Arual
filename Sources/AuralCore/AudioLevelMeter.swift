@@ -47,9 +47,11 @@ public struct AudioLevelEnvelope {
 public enum ApplicationAudioIntent {
     /// 自定义应用路由必须读取并重放音频；因此即使没有打开音量管理或电平表，也要进入 mixing。
     public static func mode(state: ApplicationMixState, isPlaying: Bool, meterVisible: Bool,
-                            requiresRouting: Bool = false) -> ApplicationAudioMode? {
+                            requiresRouting: Bool = false,
+                            requiresEffects: Bool = false) -> ApplicationAudioMode? {
         guard state.failure == nil else { return nil }
-        if state.managed || requiresRouting { return .mixing }
+        // 音效与路由一样需要真实重放；APP 短暂停流时也保留同一处理链。
+        if state.managed || requiresRouting || requiresEffects { return .mixing }
         return isPlaying && meterVisible ? .metering : nil
     }
 }

@@ -116,6 +116,12 @@ struct SettingsView: View {
                 isOn: simultaneousOutputBinding
             )
             PanelDivider()
+            SettingsToggleRow(
+                title: settings.localized("启用应用音效"),
+                detail: settings.localized("为每个应用提供 10 段均衡器和预设。"),
+                isOn: applicationEffectsBinding
+            )
+            PanelDivider()
             MenuBarBatterySettingsRow(settings: settings, group: model.headphones)
         }
     }
@@ -174,6 +180,17 @@ struct SettingsView: View {
         )
     }
 
+    private var applicationEffectsBinding: Binding<Bool> {
+        Binding(
+            get: { settings.appAudioEffectsEnabled },
+            set: { enabled in
+                // 设置持久化与运行时旁路同时更新，关闭后不会留下不可见的后台音效处理。
+                settings.appAudioEffectsEnabled = enabled
+                model.setApplicationEffectsEnabled(enabled)
+            }
+        )
+    }
+
     private func languageTitle(_ language: AppLanguage) -> String {
         switch language {
         case .system: return settings.localized("跟随系统")
@@ -195,7 +212,8 @@ enum SettingsMetrics {
     // 分组标题、设置项与分隔线共用窗口留白，内层不再叠加缩进。
     static let horizontalInset: CGFloat = 18
     static let width: CGFloat = 500
-    static let height: CGFloat = 470
+    // 新增应用音效总开关后按真实内容增高，避免固定窗口裁掉最后一行。
+    static let height: CGFloat = 520
     static let controlWidth: CGFloat = 238
     static let booleanControlWidth: CGFloat = 116
     static let rowHeight: CGFloat = 40

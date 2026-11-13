@@ -54,6 +54,7 @@ final class AppSettings: ObservableObject {
         static let appearance = "local.aural.settings.appearance"
         static let headphones = "local.aural.settings.showHeadphones"
         static let simultaneousOutput = "local.aural.settings.showSimultaneousOutput"
+        static let appAudioEffects = "local.aural.settings.appAudioEffectsEnabled"
         static let menuBarBatterySource = "local.aural.settings.menuBarBatterySource"
         static let legacyCurrentDeviceBattery = "local.aural.settings.showCurrentDeviceBattery"
     }
@@ -75,6 +76,9 @@ final class AppSettings: ObservableObject {
     @Published var showSimultaneousOutput: Bool {
         didSet { defaults.set(showSimultaneousOutput, forKey: Key.simultaneousOutput) }
     }
+    @Published var appAudioEffectsEnabled: Bool {
+        didSet { defaults.set(appAudioEffectsEnabled, forKey: Key.appAudioEffects) }
+    }
     @Published var menuBarBatterySource: MenuBarBatterySource {
         didSet { defaults.set(menuBarBatterySource.storageValue, forKey: Key.menuBarBatterySource) }
     }
@@ -83,9 +87,10 @@ final class AppSettings: ObservableObject {
         self.defaults = defaults
         language = AppLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .system
         appearance = AppAppearance(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .system
-        // 耳机控制、多设备输出与菜单栏电量都是可选能力，首次启动默认关闭。
+        // 耳机控制、多设备输出、应用音效与菜单栏电量都是可选能力，首次启动默认关闭。
         showHeadphoneControls = defaults.object(forKey: Key.headphones) as? Bool ?? false
         showSimultaneousOutput = defaults.object(forKey: Key.simultaneousOutput) as? Bool ?? false
+        appAudioEffectsEnabled = defaults.object(forKey: Key.appAudioEffects) as? Bool ?? false
         if let stored = defaults.string(forKey: Key.menuBarBatterySource),
            let source = MenuBarBatterySource(storageValue: stored) {
             menuBarBatterySource = source
@@ -275,6 +280,65 @@ enum L10n {
         "应用捕获与输出的音频格式尚未一致，请重新应用":
             "The app capture and output formats have not matched yet. Reapply the configuration.",
         "应用播放增益，不影响麦克风输入": "App playback gain does not affect microphone input",
+        "音效": "Effects",
+        "音效：关闭": "Effects: Off",
+        "音效：%@": "Effects: %@",
+        "启用应用音效": "Enable App Effects",
+        "为每个应用提供 10 段均衡器和预设。":
+            "Add a 10-band EQ and presets for each app.",
+        "关闭后不会改变该应用的声音。": "When off, this app’s sound is unchanged.",
+        "预设": "Preset",
+        "预设 1": "Preset 1",
+        "内置": "Built-in",
+        "我的预设": "My Presets",
+        "平坦": "Flat",
+        "语音增强": "Voice Boost",
+        "播客": "Podcast",
+        "音乐": "Music",
+        "电影": "Movie",
+        "低音增强": "Bass Boost",
+        "自定义": "Custom",
+        "另存为预设": "Save as Preset",
+        "重置": "Reset",
+        "重命名…": "Rename…",
+        "重命名预设": "Rename Preset",
+        "复制": "Duplicate",
+        "删除…": "Delete…",
+        "删除预设？": "Delete Preset?",
+        "保存": "Save",
+        "重命名": "Rename",
+        "删除": "Delete",
+        "预设名称": "Preset Name",
+        "预设 %d": "Preset %d",
+        "预设 %d 副本": "Preset %d Copy",
+        "%@ 副本": "%@ Copy",
+        "%@ 副本 %d": "%@ Copy %d",
+        "保存当前配置": "Save current configuration",
+        "已使用该预设的 App 会保留当前声音，并显示为“自定义”。":
+            "Apps using this preset keep their current sound and become “Custom”.",
+        "设置中的“启用应用音效”当前已关闭，此配置会在重新开启后生效。":
+            "Enable App Effects is off in Settings. These settings apply when it is turned back on.",
+        "对比原声": "Compare Original",
+        "临时对比未处理的声音，不修改已保存设置":
+            "Compare the unprocessed sound without changing saved settings",
+        "频响曲线预览；使用下方推子调整":
+            "Response curve preview; use the faders below to adjust",
+        "%@ 增益": "%@ Gain",
+        "应用音效必须包含十个有效增益":
+            "App effects must contain ten valid gains",
+        "应用音效增益必须在 -12～12 dB 之间":
+            "App effect gains must be between -12 and 12 dB",
+        "该应用没有稳定身份，不能保存应用音效":
+            "This app has no stable identity, so its effects cannot be saved",
+        "预设名称不能为空，且不能超过 40 个字符":
+            "Preset names must be 1–40 characters long",
+        "已存在同名预设": "A preset with this name already exists",
+        "自动防削波": "Automatic clipping protection",
+        "已启用应用音效": "App effects applied",
+        "应用音效配置无法读取，请检查本地设置":
+            "App effect settings could not be read. Check local settings.",
+        "应用音效配置无法保存，请检查本地设置":
+            "App effect settings could not be saved. Check local settings.",
         "重试电平": "Retry Level",
         "重新应用音量": "Reapply Volume",
         "应用配置": "Apply Configuration",

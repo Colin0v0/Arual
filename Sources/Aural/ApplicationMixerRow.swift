@@ -9,6 +9,8 @@ struct ApplicationMixerRow: View {
     let metersVisible: Bool
     let awaitingStream: Bool
     let status: String
+    let effectsAvailable: Bool
+    let audioEffect: AppAudioEffectSettings
     let routingEnabled: Bool
     let audioRoute: AppAudioRoute
     let routeOutputs: [AudioOutput]
@@ -17,6 +19,8 @@ struct ApplicationMixerRow: View {
     let retryMeter: () -> Void
     let applyConfiguration: () -> Void
     let stopManaging: () -> Void
+    let updateAudioEffect: (AppAudioEffectSettings) -> Void
+    let openApplicationAudioEffects: () -> Void
     let setAudioRoute: (AppAudioRoute) -> Void
     let toggleRouteOutput: (String) -> Void
     @Environment(\.appLanguage) private var language
@@ -29,6 +33,10 @@ struct ApplicationMixerRow: View {
          awaitingStream: Bool, status: String, toggleMute: @escaping () -> Void,
          setGain: @escaping (Float) -> Void, retryMeter: @escaping () -> Void,
          applyConfiguration: @escaping () -> Void, stopManaging: @escaping () -> Void,
+         effectsAvailable: Bool = false,
+         audioEffect: AppAudioEffectSettings = .disabled,
+         updateAudioEffect: @escaping (AppAudioEffectSettings) -> Void = { _ in },
+         openApplicationAudioEffects: @escaping () -> Void = {},
          routingEnabled: Bool = false, audioRoute: AppAudioRoute = .allOutputs,
          routeOutputs: [AudioOutput] = [],
          setAudioRoute: @escaping (AppAudioRoute) -> Void = { _ in },
@@ -40,6 +48,8 @@ struct ApplicationMixerRow: View {
         self.metersVisible = metersVisible
         self.awaitingStream = awaitingStream
         self.status = status
+        self.effectsAvailable = effectsAvailable
+        self.audioEffect = audioEffect
         self.routingEnabled = routingEnabled
         self.audioRoute = audioRoute
         self.routeOutputs = routeOutputs
@@ -48,6 +58,8 @@ struct ApplicationMixerRow: View {
         self.retryMeter = retryMeter
         self.applyConfiguration = applyConfiguration
         self.stopManaging = stopManaging
+        self.updateAudioEffect = updateAudioEffect
+        self.openApplicationAudioEffects = openApplicationAudioEffects
         self.setAudioRoute = setAudioRoute
         self.toggleRouteOutput = toggleRouteOutput
         _hover = StateObject(wrappedValue: PanelRowHoverState(active: initiallyHovered))
@@ -83,7 +95,7 @@ struct ApplicationMixerRow: View {
                 }
             }
             Text(app.label).lineLimit(1).help(app.bundleID)
-                .frame(width: routingEnabled ? 100 : 128, alignment: .leading)
+                .frame(width: applicationNameWidth, alignment: .leading)
             PanelActionButton(systemName: state.muted ? "speaker.slash.fill" : "speaker.wave.2",
                               title: state.muted
                                   ? L10n.format("取消静音 %@", language: language, arguments: [app.label])
@@ -96,9 +108,12 @@ struct ApplicationMixerRow: View {
             .accessibilityValue(L10n.text(state.muted ? "已静音" : "未静音", language: language))
             PanelVolumeSlider(value: Binding(get: { Double(state.gain) }, set: { setGain(Float($0)) }),
                               label: L10n.format("%@ 的独立增益", language: language, arguments: [app.label]))
-                .frame(minWidth: routingEnabled ? 112 : PanelMetrics.compactSliderMinimumWidth)
+                .frame(minWidth: sliderMinimumWidth)
                 .help(L10n.text("应用播放增益，不影响麦克风输入", language: language))
             PanelPercentage(value: state.gain, highlighted: hover.active)
+            if effectsAvailable {
+                effectButton
+            }
             if routingEnabled {
                 routingButton
             }
@@ -111,6 +126,62 @@ struct ApplicationMixerRow: View {
         .help(state.failure.map { L10n.text($0, language: language) }
               ?? L10n.format("%@；右键打开应用操作", language: language, arguments: [status]))
         .contextMenu { options }
+    }
+
+    private var trailingControlCount: Int {
+        (effectsAvailable ? 1 : 0) + (routingEnabled ? 1 : 0)
+    }
+
+    /// 两个入口同时出现时只压缩应用名与滑杆的弹性空间，不增加行高。
+    private var applicationNameWidth: CGFloat {
+        switch trailingControlCount {
+        case 0: return 128
+        case 1: return 112
+        default: return 96
+        }
+    }
+
+    private var sliderMinimumWidth: CGFloat {
+        switch trailingControlCount {
+        case 0: return PanelMetrics.compactSliderMinimumWidth
+        case 1: return 124
+        default: return 112
+        }
+    }
+
+    /// 音效入口与路由按钮同尺寸；只有该应用启用音效时才使用 Accent Color。
+    private var effectButton: some View {
+        PanelActionButton(
+            systemName: "slider.horizontal.3",
+            title: effectTitle,
+            tint: audioEffect.enabled ? PanelStyle.accent : nil,
+            hoverStyle: .foregroundOnly,
+            action: openApplicationAudioEffects
+        )
+        .help(effectTitle)
+    }
+
+    private var effectTitle: String {
+        guard audioEffect.enabled else {
+            return L10n.text("音效：关闭", language: language)
+        }
+        let preset: String
+        preset = effectPresetTitle
+        return L10n.format("音效：%@", language: language, arguments: [preset])
+    }
+
+    /// 行图标只显示简短状态，具体预设名和十段数值都在独立窗口中读取。
+    private var effectPresetTitle: String {
+        switch audioEffect.preset {
+        case .builtIn(.flat): return L10n.text("平坦", language: language)
+        case .builtIn(.voice): return L10n.text("语音增强", language: language)
+        case .builtIn(.podcast): return L10n.text("播客", language: language)
+        case .builtIn(.music): return L10n.text("音乐", language: language)
+        case .builtIn(.movie): return L10n.text("电影", language: language)
+        case .builtIn(.bassBoost): return L10n.text("低音增强", language: language)
+        case .custom: return L10n.text("我的预设", language: language)
+        case .manual: return L10n.text("已修改", language: language)
+        }
     }
 
     @ViewBuilder private var options: some View {

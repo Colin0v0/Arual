@@ -1,47 +1,46 @@
 #!/bin/bash
 set -euo pipefail
-# 发布说明单独生成并在 PR 阶段实际运行；变量一律使用花括号，隔离相邻的中文标点。
+
 : "${VERSION:?缺少发布版本}"
-: "${TAG:?缺少发布标签}"
-: "${REPOSITORY:?缺少发布仓库}"
-: "${DMG:?缺少 DMG 路径}"
-: "${ZIP:?缺少 ZIP 路径}"
-cat <<EOF
-## Aural ${VERSION} 正式版
 
-1. 提供系统输出、麦克风、应用独立音量与实时电平、多设备输出、应用级输出路由和兼容蓝牙耳机控制。
-2. 应用级路由支持跟随全部输出或选择当前多设备组中的自定义设备子集，并按稳定的应用身份保存。
-3. 系统音频权限使用 macOS 原生授权流程；拒绝后显示 Aural 说明框，授权成功后自动重启恢复功能。
-4. 修复蓝牙连接或重连时默认输出短暂未收敛导致的误报，过渡期间保持现有界面并对快照读取设置明确上限。
-5. 集中修复应用音频捕获、Chrome 输出元数据、音频格式变化、设备重连和更新安装中的已知问题。
-6. 支持简体中文、英文和跟随系统，保持菜单栏紧凑交互与浅色、深色外观。
-7. 修复英文或跟随系统英文语言时，设置页“关闭 / 开启”控件仍显示中文的问题。
+# GitHub Release 只展示该版本的用户可见变化，文案按版本独立维护。
+# 测试可通过 RELEASE_NOTES_DIR 指向临时目录，正式发布固定读取 docs/releases。
+RELEASE_NOTES_DIR="${RELEASE_NOTES_DIR:-docs/releases}"
+NOTES_FILE="${RELEASE_NOTES_DIR}/${VERSION}.md"
 
-### 安装与更新
+if [[ ! -f "$NOTES_FILE" ]]; then
+    printf '缺少 %s 的发布文案：%s\n' "$VERSION" "$NOTES_FILE" >&2
+    exit 1
+fi
+if [[ ! -s "$NOTES_FILE" ]]; then
+    printf '%s 的发布文案为空：%s\n' "$VERSION" "$NOTES_FILE" >&2
+    exit 1
+fi
+if ! grep -Eq '^-[[:space:]]+[^[:space:]]' "$NOTES_FILE"; then
+    printf '%s 的发布文案必须至少包含一条更新列表\n' "$VERSION" >&2
+    exit 1
+fi
 
-- 适用于 macOS 15.4 或更新版本的 Apple Silicon Mac。
-- Release 优化构建，版本 ${VERSION}；提供可拖入 Applications 的 DMG、旧版自动更新需要的 ZIP，以及各自 SHA-256 校验文件。
-- 当前仍采用 ad-hoc 签名，尚未完成 Apple Developer ID 签名与公证，首次打开时 macOS 可能要求确认。
-- 合并 release/${VERSION} 后由 GitHub Actions 自动发布。
+# Release 必须同时提供中文与 English 两段，并且每段都有实际更新条目。
+if ! awk '
+    /^\*\*中文\*\*$/ { zh = 1; next }
+    /^\*\*English\*\*$/ { en = 1; next }
+    /^- / {
+        if (zh == 1 && en == 0) zh_items = 1
+        if (en == 1) en_items = 1
+    }
+    END { exit !(zh && en && zh_items && en_items) }
+' "$NOTES_FILE"; then
+    printf '%s 的发布文案必须包含“**中文**”和“**English**”两段更新列表\n' "$VERSION" >&2
+    exit 1
+fi
 
-- 已安装旧版的用户可以通过应用内更新或下载 DMG 覆盖安装。重新签名后 macOS 可能要求重新允许系统音频录制。
-- 0.1.15 若出现下载完成后安装失败，请完全退出 Aural 后重试；仍失败时直接下载本版 DMG 覆盖安装。
-- 0.1.11 / 0.1.12 更新器仍需 ZIP 及 GitHub 资产 digest；本次同时发布兼容 ZIP。旧客户端的匿名 API 配额不会被远端发布修复，遇 403 请等待配额恢复或手动安装 DMG。
+# Release 标题已经包含版本号；正文不再重复标题和其他章节，
+# 避免 GitHub 生成重复目录，也避免把历史功能再次写进当前版本。
+if grep -Eq '^#{1,6}[[:space:]]' "$NOTES_FILE"; then
+    printf '%s 的发布文案只能包含本次更新列表，不要添加标题：%s\n' \
+        "$VERSION" "$NOTES_FILE" >&2
+    exit 1
+fi
 
-### 校验
-
-下载后可在终端执行：
-
-\`\`\`sh
-gh release download ${TAG} --repo ${REPOSITORY}
-shasum -a 256 -c $(basename "${DMG}").sha256
-shasum -a 256 -c $(basename "${ZIP}").sha256
-\`\`\`
-
-### 请先了解
-
-- 本版是稳定发布通道版本，但安装包仍未完成 Apple 公证。
-- 应用路由仍在真实设备上持续验证；切换可能短暂断音，多副蓝牙耳机不保证同步，受保护音频可能无法处理。
-- 权限状态检测使用 macOS 非公开接口；系统升级可能影响检测，无法检查时会明确提示，不假定已授权。
-- 如遇更新安装问题，请保留发布页、校验结果和系统版本信息以便定位。
-EOF
+cat "$NOTES_FILE"
