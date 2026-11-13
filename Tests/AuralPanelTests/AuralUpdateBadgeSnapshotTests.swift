@@ -13,11 +13,11 @@ struct AuralUpdateBadgeSnapshotTests {
         #expect(!AuralUpdateBadge.showsDismiss(.idle))
         #expect(!AuralUpdateBadge.usesTextPresentation(.available, presentation: .capsule))
         #expect(AuralUpdateBadge.usesTextPresentation(.available, presentation: .text))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.failed("失败"), presentation: .text))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.downloading(progress: 0.5), presentation: .text))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.preparing, presentation: .text))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.ready, presentation: .text))
-        #expect(!AuralUpdateBadge.usesTextPresentation(.idle, presentation: .text))
+        #expect(AuralUpdateBadge.usesTextPresentation(.failed("失败"), presentation: .text))
+        #expect(AuralUpdateBadge.usesTextPresentation(.downloading(progress: 0.5), presentation: .text))
+        #expect(AuralUpdateBadge.usesTextPresentation(.preparing, presentation: .text))
+        #expect(AuralUpdateBadge.usesTextPresentation(.ready, presentation: .text))
+        #expect(AuralUpdateBadge.usesTextPresentation(.idle, presentation: .text))
         #expect(L10n.text("未发现新版本", language: .english) == "No Updates Available")
     }
 
@@ -35,6 +35,14 @@ struct AuralUpdateBadgeSnapshotTests {
                              action: {}, skip: {})
             AuralUpdateBadge(phase: .failed("网络不可用"), version: "0.1.12", language: .chinese,
                              action: {}, skip: {})
+            AuralUpdateBadge(phase: .downloading(progress: 0.64), version: "0.1.12", language: .chinese,
+                             action: {}, skip: {}, presentation: .text)
+            AuralUpdateBadge(phase: .preparing, version: "0.1.12", language: .chinese,
+                             action: {}, skip: {}, presentation: .text)
+            AuralUpdateBadge(phase: .ready, version: "0.1.12", language: .chinese,
+                             action: {}, skip: {}, presentation: .text)
+            AuralUpdateBadge(phase: .failed("网络不可用"), version: "0.1.12", language: .chinese,
+                             action: {}, skip: {}, presentation: .text)
         }
         .padding(20)
         .background(PanelStyle.canvas)
@@ -65,6 +73,14 @@ struct AuralUpdateBadgeSnapshotTests {
                              action: {}, skip: {})
             AuralUpdateBadge(phase: .failed("Network unavailable"), version: "0.1.12", language: .english,
                              action: {}, skip: {})
+            AuralUpdateBadge(phase: .downloading(progress: 0.64), version: "0.1.12", language: .english,
+                             action: {}, skip: {}, presentation: .text)
+            AuralUpdateBadge(phase: .preparing, version: "0.1.12", language: .english,
+                             action: {}, skip: {}, presentation: .text)
+            AuralUpdateBadge(phase: .ready, version: "0.1.12", language: .english,
+                             action: {}, skip: {}, presentation: .text)
+            AuralUpdateBadge(phase: .failed("Network unavailable"), version: "0.1.12", language: .english,
+                             action: {}, skip: {}, presentation: .text)
         }
         .padding(20)
         .background(PanelStyle.canvas)
