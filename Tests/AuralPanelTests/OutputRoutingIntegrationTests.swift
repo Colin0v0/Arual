@@ -7,6 +7,55 @@ import Testing
 
 @MainActor
 struct OutputRoutingIntegrationTests {
+    @Test func transientBluetoothSnapshotPendingDoesNotLatchAnOutputError() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+        let initialAudio = model.audio
+
+        // 模拟 macOS 已把媒体默认输出切到耳机，但输出流尚未出现在本次 HAL 枚举中的瞬间。
+        hardware.selected = 2
+        hardware.systemSelected = 3
+        hardware.pendingSnapshot = true
+        model.refresh()
+
+        #expect(model.audio == initialAudio)
+        #expect(model.audioError == nil)
+        #expect(model.outputRouting.phase == .stable)
+        #expect(model.outputRouting.error == nil)
+
+        hardware.pendingSnapshot = false
+        model.refresh()
+
+        #expect(model.audio?.selectedID == 2)
+        #expect(model.outputRouting.actualOutput?.id == 2)
+        #expect(model.outputRouting.actualSystemOutputID == 3)
+        #expect(model.outputRouting.error == nil)
+        #expect(model.shutdown())
+    }
+
+    @Test func sustainedSnapshotPendingStillReportsAfterTheSettleWindow() {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment)
+
+        hardware.pendingSnapshot = true
+        model.refresh()
+        #expect(model.outputRouting.phase == .stable)
+        #expect(model.audioError == nil)
+
+        // 超过三秒仍未收敛就是真实读取失败，必须显示错误，不能无限等待或伪装成功。
+        audio.now = audio.now.addingTimeInterval(3.1)
+        model.refresh()
+        #expect(model.audio == nil)
+        #expect(model.audioError != nil)
+        #expect(model.outputRouting.phase == .failed)
+        #expect(model.outputRouting.error != nil)
+        #expect(model.shutdown())
+    }
+
     @Test func removingAnEarphoneContinuesManagedAudioOnOtherSelectedMembersWithoutReapplying() {
         let hardware = RoutingTestHardware()
         let audio = SessionFixture()
@@ -780,11 +829,16 @@ struct OutputRoutingIntegrationTests {
         #expect(model.shutdown())
     }
 
-    @Test func permissionRevocationStopsProcessingButKeepsGainAndRouteIntent() {
+    @Test func permissionRevocationStopsProcessingButKeepsGainAndRouteIntent() throws {
+        let suite = "Aural.RouteIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
         let hardware = RoutingTestHardware()
         let audio = SessionFixture()
         let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
-                             applicationAudio: audio.environment)
+                             applicationAudio: audio.environment,
+                             appAudioRouteStore: AppAudioRouteStore(defaults: defaults))
         model.setMeteringVisible(true, for: .popover)
         model.setApplicationGain(0.35, for: audio.row.id)
         #expect(model.startSimultaneousOutput(["speaker", "headphone"]))
