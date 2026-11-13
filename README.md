@@ -17,7 +17,7 @@
 
 Aural keeps everyday audio controls in one small menu bar panel: switch speakers or microphones, adjust apps separately, use multiple outputs, and control compatible Bluetooth headphones.
 
-> **Stable release · 0.2.3**
+> **Stable release · 0.2.4**
 >
 > Aural is distributed directly and is not Apple-notarized yet. macOS may ask you to confirm the first launch.
 
