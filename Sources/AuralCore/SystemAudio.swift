@@ -226,9 +226,17 @@ public enum SystemAudio {
             currentDeviceIDs: { try HAL.ids(HAL.system, HAL.address(kAudioHardwarePropertyDevices)) }
         )
         let selected: AudioDeviceID = try HAL.read(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), initial: 0)
-        guard outputs.contains(where: { $0.id == selected }) else { throw AudioFailure("当前没有可用的默认输出设备") }
+        try requireSettledDefaultOutput(selected, outputs: outputs)
         return SystemAudioSnapshot(outputs: outputs, selectedID: selected,
                                    controls: readControls(for: outputs, readVolume: volume, readMute: mute))
+    }
+
+    /// 蓝牙连接或断开时，默认设备可能先于输出流出现在 HAL 中。
+    /// 此时整份枚举只是尚未收敛，不能在设备仍处于切换窗口时锁存为永久失败。
+    static func requireSettledDefaultOutput(_ selected: AudioDeviceID, outputs: [AudioOutput]) throws {
+        guard selected != 0, outputs.contains(where: { $0.id == selected }) else {
+            throw AudioSnapshotPending(AudioFailure("当前没有可用的默认输出设备"))
+        }
     }
 
     /// 设备可能在系统列表与逐项读取之间重连；属性读取失败时先核对当前列表并重试一次。

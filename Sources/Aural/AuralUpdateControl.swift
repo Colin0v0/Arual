@@ -5,7 +5,7 @@ enum AuralUpdatePresentation {
     case text
 }
 
-/// 主面板和设置页共享同一个更新胶囊，避免两处状态文案和操作不一致。
+/// 主面板和设置页共享同一套更新状态，避免两处文案和操作不一致。
 struct AuralUpdateCapsule: View {
     @ObservedObject var updates: AuralUpdateChecker
     @ObservedObject var settings: AppSettings
@@ -42,7 +42,7 @@ struct AuralUpdateCapsule: View {
         return settings.localizedFormat("更新到 %@", update.version)
     }
 }
-/// 更新胶囊只表达状态；网络、校验和安装逻辑仍由 AuralUpdateChecker 持有。
+/// 主面板使用胶囊，设置页使用纯文字；网络、校验和安装逻辑仍由 AuralUpdateChecker 持有。
 struct AuralUpdateBadge: View {
     let phase: AuralUpdatePhase
     let version: String
@@ -63,26 +63,25 @@ struct AuralUpdateBadge: View {
         }
     }
 
-    /// 静止的“发现更新”只占用一行文字；下载、准备和重启仍用胶囊表达进度。
+    /// 设置页的所有更新状态都保持纯文字，不因下载或准备阶段重新长成胶囊。
     private var textPrompt: some View {
         HStack(spacing: 5) {
             Button(action: action) {
-                Text(availableTitle)
+                Text(textTitle)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(hover.active ? PanelStyle.ink : PanelStyle.secondary)
+                    .foregroundStyle(textForeground)
                     .lineLimit(1)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isBusy || phase == .idle)
             if canSkip {
                 Button(action: skip) {
                     Image(systemName: "xmark")
                         .font(.system(size: 6, weight: .bold))
                         .foregroundStyle(PanelStyle.secondary)
-                        .frame(width: 12, height: 12)
-                        .background(PanelStyle.surface, in: Circle())
-                        .overlay { Circle().strokeBorder(PanelStyle.line, lineWidth: 1) }
-                        .contentShape(Circle())
+                        .frame(width: 10, height: 12)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L10n.format("跳过 %@", language: language, arguments: [version]))
@@ -141,10 +140,10 @@ struct AuralUpdateBadge: View {
 
     private var canSkip: Bool { Self.showsDismiss(phase) }
 
-    /// 设置页的静态可更新状态使用文字；主面板始终保留紫色胶囊入口。
+    /// 设置页所有更新阶段都使用文字；主面板始终保留紫色胶囊入口。
     static func usesTextPresentation(_ phase: AuralUpdatePhase,
                                      presentation: AuralUpdatePresentation) -> Bool {
-        presentation == .text && phase == .available
+        presentation == .text
     }
 
     /// 只有用户可决定“暂不更新”的静止状态才显示关闭入口。
@@ -183,6 +182,12 @@ struct AuralUpdateBadge: View {
         return solid ? PanelStyle.updateSolidInk : PanelStyle.updateInk
     }
 
+    private var textForeground: Color {
+        if case .failed = phase { return PanelStyle.error }
+        if case .ready = phase { return hover.active ? PanelStyle.updateSolid : PanelStyle.updateInk }
+        return hover.active ? PanelStyle.ink : PanelStyle.secondary
+    }
+
     private var iconName: String {
         if case .failed = phase { return "arrow.clockwise" }
         return "arrow.up"
@@ -203,6 +208,16 @@ struct AuralUpdateBadge: View {
             return L10n.text("重启以更新", language: language)
         case .failed:
             return L10n.text("重试更新", language: language)
+        }
+    }
+
+    /// 设置页不显示图标和底板，只通过文字表达当前动作或进度。
+    private var textTitle: String {
+        switch phase {
+        case .available, .idle:
+            return availableTitle
+        case .downloading, .preparing, .ready, .failed:
+            return title
         }
     }
 

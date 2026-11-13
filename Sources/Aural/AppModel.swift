@@ -67,6 +67,8 @@ final class AppModel: ObservableObject {
         return Date()
     }
     private var routeConfirmationTimer: Timer?
+    /// 蓝牙重连时 HAL 会在短时间内先切换默认句柄、后补齐输出流；只在这个有界窗口内等待收敛。
+    private var pendingAudioSnapshotDeadline: Date?
     private var sessionRouteWaitSince: [String: Date] = [:]
     /// 仅用于界面稳定：路由确认后给音频进程三秒重新注册，绝不用于创建或保活音频会话。
     private var applicationListSettleDeadline: Date?
@@ -303,6 +305,7 @@ final class AppModel: ObservableObject {
     private func refreshAudio() {
         do {
             let fresh = try outputHardware.snapshot()
+            pendingAudioSnapshotDeadline = nil
             let previous = outputRouting.confirmed
             routing.observe(fresh, at: routingNow)
             guard let observed = routing.latestSnapshot else { throw AudioFailure("无法读回当前路由快照") }
@@ -335,6 +338,20 @@ final class AppModel: ObservableObject {
                 updateRouteConfirmationActivity()
                 return
             }
+            // 稳定状态下的蓝牙重连也可能短暂读到“默认设备还未出现在输出列表”。
+            // 保持现有界面并短周期重读，避免一次正常的 HAL 过渡被锁存成红色失败。
+            if error is AudioSnapshotPending,
+               !outputRouting.phase.isBusy,
+               outputRouting.phase != .failed {
+                if pendingAudioSnapshotDeadline == nil {
+                    pendingAudioSnapshotDeadline = routingNow.addingTimeInterval(3)
+                }
+                if let deadline = pendingAudioSnapshotDeadline, routingNow < deadline {
+                    updateRouteConfirmationActivity()
+                    return
+                }
+            }
+            pendingAudioSnapshotDeadline = nil
             routing.observationFailed(error)
             pendingApplicationReapplies.removeAll()
             updateRouteConfirmationActivity()
@@ -348,7 +365,10 @@ final class AppModel: ObservableObject {
 
     /// 只在等待 HAL 时短周期读取同一目标；不重复发出写请求，也不阻塞 UI 主线程。
     private func updateRouteConfirmationActivity() {
-        guard monitorsSystem, outputRouting.phase.isBusy || routing.hasPendingRelease && outputRouting.phase != .failed else {
+        guard monitorsSystem,
+              outputRouting.phase.isBusy
+                || routing.hasPendingRelease && outputRouting.phase != .failed
+                || pendingAudioSnapshotDeadline != nil else {
             routeConfirmationTimer?.invalidate(); routeConfirmationTimer = nil
             return
         }

@@ -51,6 +51,35 @@ struct SystemAudioTests {
         #expect(outputs.map(\.id) == [11])
     }
 
+    @Test func transientDefaultOutputInsertionReenumeratesAndRecovers() throws {
+        let speaker = AudioOutput(id: 11, uid: "speaker", name: "扬声器",
+                                  transport: kAudioDeviceTransportTypeBuiltIn)
+        let headphone = AudioOutput(id: 22, uid: "headphone", name: "耳机",
+                                    transport: kAudioDeviceTransportTypeBluetooth)
+        var enumerations = 0
+
+        let outputs = try SystemAudio.readSettledSnapshot {
+            enumerations += 1
+            let current = enumerations == 1 ? [speaker] : [speaker, headphone]
+            try SystemAudio.requireSettledDefaultOutput(22, outputs: current)
+            return current
+        }
+
+        // 蓝牙默认输出先切换时，必须重新枚举整份设备表，而不是把过渡状态锁存为失败。
+        #expect(enumerations == 2)
+        #expect(outputs.map(\.id) == [11, 22])
+    }
+
+    @Test func missingDefaultOutputPersistsAsPendingInsteadOfOrdinaryFailure() throws {
+        let speaker = AudioOutput(id: 11, uid: "speaker", name: "扬声器",
+                                  transport: kAudioDeviceTransportTypeBuiltIn)
+
+        #expect(throws: AudioSnapshotPending.self) {
+            try SystemAudio.requireSettledDefaultOutput(22, outputs: [speaker])
+        }
+        try SystemAudio.requireSettledDefaultOutput(11, outputs: [speaker])
+    }
+
     @Test func persistentPendingSnapshotRemainsAnError() {
         var attempts = 0
         #expect(throws: AudioSnapshotPending.self) {
@@ -243,5 +272,5 @@ struct SystemAudioTests {
         #expect(!SystemAudio.activeAggregateRouteContains("other", composition: composition as CFDictionary, activeUIDs: ["other"]))
     }
 
-    @Test func versionIsDefined() { #expect(AuralVersion.current == "0.2.2") }
+    @Test func versionIsDefined() { #expect(AuralVersion.current == "0.2.3") }
 }
