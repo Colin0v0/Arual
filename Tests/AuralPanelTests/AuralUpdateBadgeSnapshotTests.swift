@@ -150,8 +150,9 @@ struct AuralUpdateBadgeSnapshotTests {
             // 设置页使用真实 500×470 窗口，重点检查页脚不再被胶囊撑到底边。
             let settingsView = SettingsView(model: model, settings: settings)
                 .preferredColorScheme(appearance.colorScheme)
-            try writeSnapshot(settingsView,
-                              path: "/tmp/aural-update-text-settings-\(appearance.rawValue).png")
+            // 设置页含 NSViewRepresentable 原生菜单按钮，必须用 AppKit 宿主渲染，不能走 ImageRenderer。
+            try writeHostingSnapshot(settingsView, appearance: appearance,
+                                     path: "/tmp/aural-update-text-settings-\(appearance.rawValue).png")
         }
     }
 
@@ -162,6 +163,19 @@ struct AuralUpdateBadgeSnapshotTests {
         let image = try #require(renderer.nsImage)
         let tiff = try #require(image.tiffRepresentation)
         let bitmap = try #require(NSBitmapImageRep(data: tiff))
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: path))
+    }
+
+    @MainActor
+    private func writeHostingSnapshot<V: View>(_ view: V, appearance: AppAppearance,
+                                               path: String) throws {
+        let host = NSHostingView(rootView: view)
+        host.appearance = appearance.nsAppearance
+        host.frame = NSRect(origin: .zero, size: SettingsMetrics.size)
+        PanelTestSupport.flushLayout(host)
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: path))
     }

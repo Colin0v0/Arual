@@ -96,23 +96,19 @@ struct HeadphoneSection: View {
                 }
             }
             Spacer()
-            if controller.state.isCharging == true {
+            if controller.state.battery?.isCharging == true {
                 // 仅在耳机明确报告充电时显示，未读取不等于未充电。
                 Image(systemName: "bolt.fill")
                     .foregroundStyle(PanelStyle.secondary)
                     .accessibilityLabel(L10n.text("正在充电", language: language))
             }
-            if let battery = controller.state.appleBattery {
-                // 各部件只显示系统实际返回的值，未知部件不补零、不借用另一副耳机的电量。
-                Text(appleBatteryTitle(battery))
+            if let battery = controller.state.battery, battery.hasLevel {
+                let title = HeadphoneBatteryText.detail(battery, language: language)
+                // 各部件只显示协议实际返回的值，未知部件不补零、不借用另一副耳机的电量。
+                Text(title)
                     .font(PanelStyle.captionFont)
                     .foregroundStyle(PanelStyle.secondary)
-                    .accessibilityLabel(appleBatteryTitle(battery))
-            } else if let battery = controller.state.battery {
-                // 不用假的满电图标表达电量，百分比完全来自耳机的确认响应。
-                Text("\(battery)%").monospacedDigit().foregroundStyle(PanelStyle.secondary)
-                    .accessibilityLabel(L10n.format("耳机电量 %d%%", language: language,
-                                                    arguments: [battery]))
+                    .accessibilityLabel(HeadphoneBatteryText.accessibility(battery, language: language) ?? title)
             }
             if controller.isReconnecting || (!canScan && controller.phase != .ready && controller.phase != .disconnecting) {
                 ProgressView().controlSize(.small).accessibilityLabel(controller.phase.title)
@@ -124,19 +120,10 @@ struct HeadphoneSection: View {
         }
     }
 
-
-    private func appleBatteryTitle(_ battery: AppleHeadphoneBattery) -> String {
-        var parts: [String] = []
-        if let left = battery.left { parts.append(L10n.format("左 %d%%", language: language, arguments: [left])) }
-        if let right = battery.right { parts.append(L10n.format("右 %d%%", language: language, arguments: [right])) }
-        if let caseLevel = battery.caseLevel { parts.append(L10n.format("盒 %d%%", language: language, arguments: [caseLevel])) }
-        return parts.joined(separator: " · ")
-    }
-
     private var connectedControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let actual = controller.state.noiseMode, !controller.supportedNoiseModes.isEmpty {
-                PanelTabs(items: controller.supportedNoiseModes, selection: actual,
+            if !controller.supportedNoiseModes.isEmpty {
+                PanelTabs(items: controller.supportedNoiseModes, selection: controller.state.noiseMode,
                           title: { L10n.text($0.title, language: language) }) { mode in
                     controller.setNoiseMode(mode)
                 }

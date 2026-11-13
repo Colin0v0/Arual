@@ -3,13 +3,21 @@ import Foundation
 
 /// 保留佩戴状态的确定程度，不能把未知的一侧当成已佩戴或单耳。
 public enum AppleHeadphoneWearState: Equatable, Sendable {
+    /// 设备没有可用的入耳检测，或用户在系统中关闭了该功能。
+    /// 这不是“未知佩戴”，不能因此永久隐藏头戴式耳机的模式控制。
+    case notApplicable
     case bothEars, singleEar, notWorn, unknown
     public var isWorn: Bool? {
         switch self {
         case .bothEars, .singleEar: return true
         case .notWorn: return false
-        case .unknown: return nil
+        case .notApplicable, .unknown: return nil
         }
+    }
+
+    /// 只有已启用的入耳检测才要求双耳佩戴；没有佩戴门控时不伪造佩戴状态。
+    public var allowsModeControl: Bool {
+        self == .bothEars || self == .notApplicable
     }
 }
 
@@ -73,10 +81,12 @@ public enum AppleHeadphoneHAL {
     public static func wearState(deviceID: AudioDeviceID) throws -> AppleHeadphoneWearState {
         let enabledAddress = HAL.address(0x6965_6465)
         let placementAddress = HAL.address(0x6965_7362)
-        guard isSupported(deviceID: deviceID), HAL.hasProperty(deviceID, enabledAddress),
-              HAL.hasProperty(deviceID, placementAddress) else { return .unknown }
+        guard isSupported(deviceID: deviceID) else { return .unknown }
+        guard HAL.hasProperty(deviceID, enabledAddress),
+              HAL.hasProperty(deviceID, placementAddress) else { return .notApplicable }
         let enabled: UInt32 = try HAL.read(deviceID, enabledAddress, initial: 0)
-        guard enabled == 1 else { return .unknown }
+        // 系统关闭入耳检测后，设备仍可正常切换降噪；不能把“用户关闭”当成未佩戴。
+        guard enabled == 1 else { return enabled == 0 ? .notApplicable : .unknown }
         let placement = try HAL.read(deviceID, placementAddress, initial: (UInt32(0), UInt32(0)))
         return wearState(primary: placement.0, secondary: placement.1)
     }
@@ -96,10 +106,14 @@ public enum AppleHeadphoneHAL {
         wearState(primary: primary, secondary: secondary).isWorn
     }
 
-    /// 能力位图不声明“关闭”模式；只有设备当前确实处于关闭时才把关闭加入可选项。
+    /// Apple 的 `lsms` 只声明降噪相关模式，不声明“关闭”（Allow Off）。
+    ///
+    /// 对公开了聆听模式的设备，关闭始终是系统提供的原始模式 1。这里不能在
+    /// 当前处于其他模式时漏掉关闭，否则用户只能单方向切走，无法再切回 Off。
+    /// 没有任何聆听模式能力且当前值也不是 Off 时，仍保持空列表，不凭空启用控制。
     static func supportedModes(mask: UInt32, currentRaw: UInt32) -> [NoiseMode] {
         var modes: Set<NoiseMode> = []
-        if currentRaw == 1 { modes.insert(.off) }
+        if currentRaw == 1 || mask != 0 { modes.insert(.off) }
         if mask & 0b001 != 0 { modes.insert(.cancellation) }
         if mask & 0b010 != 0 { modes.insert(.transparency) }
         if mask & 0b100 != 0 { modes.insert(.adaptive) }
@@ -118,7 +132,7 @@ public enum AppleHeadphoneHAL {
     /// 只提交一次写入。异步读回和取消由控制器完成，不在后台留一条不可取消的 sleep/write 链路。
     public static func requestNoiseMode(_ mode: NoiseMode, output: AudioOutput) throws {
         let before = try snapshot(on: output.id)
-        guard before.wearState == .bothEars else { throw AppleHeadphoneNotWorn() }
+        guard before.wearState.allowsModeControl else { throw AppleHeadphoneNotWorn() }
         guard before.supportedNoiseModes.contains(mode) else {
             throw AudioFailure("Apple 耳机未公开“\(mode.title)”聆听模式")
         }

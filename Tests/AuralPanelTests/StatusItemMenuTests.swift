@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import AuralCore
 @testable import Aural
 
 struct StatusItemMenuTests {
@@ -81,12 +82,29 @@ struct StatusItemMenuTests {
         #expect(menu.items[2].isSeparatorItem)
     }
 
-    @Test func batteryTextOnlyUsesARealPercentageWhenEnabled() {
-        #expect(StatusItemBatteryText.title(enabled: false, percent: 87).isEmpty)
-        #expect(StatusItemBatteryText.title(enabled: true, percent: nil).isEmpty)
-        #expect(StatusItemBatteryText.title(enabled: true, percent: -1).isEmpty)
-        #expect(StatusItemBatteryText.title(enabled: true, percent: 101).isEmpty)
-        #expect(StatusItemBatteryText.title(enabled: true, percent: 0) == "0%")
-        #expect(StatusItemBatteryText.title(enabled: true, percent: 87) == "87%")
+    @Test func batteryTextUsesOnlyRealProtocolValues() {
+        #expect(StatusItemBatteryText.title(reading: nil).isEmpty)
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(single: -1)).isEmpty)
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(single: 101)).isEmpty)
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(single: 0)) == "0%")
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(single: 87)) == "87%")
+    }
+
+    @Test func dualEarbudBatteryStaysCompactAndCaseDoesNotUseNumericTitle() {
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(left: 82, right: 82)) == "82%")
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(left: 82, right: 79))
+                == "L82 / R79")
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(left: 82)) == "L82")
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(right: 79)) == "R79")
+        #expect(StatusItemBatteryText.title(reading: HeadphoneBatteryReading(caseLevel: 65)).isEmpty)
+    }
+
+    @Test func fullBatteryDetailLocalizesEveryAvailablePart() {
+        let reading = HeadphoneBatteryReading(left: 82, right: 79, caseLevel: 65)
+        #expect(HeadphoneBatteryText.detail(reading, language: .chinese) == "左 82% · 右 79% · 盒 65%")
+        #expect(HeadphoneBatteryText.detail(reading, language: .english) == "L 82% · R 79% · Case 65%")
+        #expect(StatusItemBatteryText.toolTip(reading: reading, deviceName: "AirPods",
+                                             language: .english)
+                == "Aural · AirPods · L 82% · R 79% · Case 65%")
     }
 }

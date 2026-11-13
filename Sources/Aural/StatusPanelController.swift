@@ -68,12 +68,28 @@ final class StatusPanelController: NSObject {
             button.toolTip = "Aural · 左键打开/收起，右键更多操作"
         }
         updateStatusItemBattery()
-        statusBatteryCancellables.insert(AppSettings.shared.$showCurrentDeviceBattery
+        statusBatteryCancellables.insert(AppSettings.shared.$menuBarBatterySource
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateStatusItemBattery() }
+            })
+        statusBatteryCancellables.insert(AppSettings.shared.$language
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateStatusItemBattery() }
             })
         statusBatteryCancellables.insert(model.headphones.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateStatusItemBattery() }
+            })
+        // 当前输出和聚合成员变化都会改变“跟随当前输出”的唯一目标。
+        statusBatteryCancellables.insert(model.$audio
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateStatusItemBattery() }
+            })
+        statusBatteryCancellables.insert(model.$outputRouting
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateStatusItemBattery() }
@@ -261,14 +277,22 @@ final class StatusPanelController: NSObject {
 
     private func updateStatusItemBattery() {
         guard let button = statusItem.button else { return }
-        let enabled = AppSettings.shared.showCurrentDeviceBattery
-        let battery = model.headphones.battery
-        button.title = StatusItemBatteryText.title(enabled: enabled, percent: battery)
-        if enabled, let battery {
-            button.toolTip = "Aural · 当前设备电量 \(battery)% · 左键打开/收起，右键更多操作"
-            button.setAccessibilityValue("当前设备电量 \(battery)%")
+        let settings = AppSettings.shared
+        let candidate = model.menuBarBattery(for: settings.menuBarBatterySource)
+        button.title = StatusItemBatteryText.title(reading: candidate?.reading)
+        let actionHint = L10n.text("左键打开/收起，右键更多操作", language: settings.resolvedLanguage)
+        if let candidate,
+           let batteryTip = StatusItemBatteryText.toolTip(
+               reading: candidate.reading,
+               deviceName: candidate.displayName,
+               language: settings.resolvedLanguage
+           ) {
+            button.toolTip = "\(batteryTip) · \(actionHint)"
+            button.setAccessibilityValue(
+                HeadphoneBatteryText.accessibility(candidate.reading, language: settings.resolvedLanguage)
+            )
         } else {
-            button.toolTip = "Aural · 左键打开/收起，右键更多操作"
+            button.toolTip = "Aural · \(actionHint)"
             button.setAccessibilityValue(nil)
         }
     }

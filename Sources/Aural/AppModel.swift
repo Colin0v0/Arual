@@ -444,6 +444,35 @@ final class AppModel: ObservableObject {
         return audio.outputs.first { $0.id == audio.selectedID }
     }
 
+    /// 菜单栏“跟随当前输出”只认系统当前实际输出，不借用另一副已连接耳机。
+    var menuBarBatteryCurrentOutput: MenuBarBatteryCurrentOutput {
+        guard let output = selectedOutput else { return .unsupported }
+        if output.isAuralMultiOutput {
+            guard let route = multiOutputRoute, route.uid == output.uid else { return .unsupported }
+            return .multiOutput(memberUIDs: route.outputs.map(\.uid))
+        }
+        guard !output.isAggregate else { return .unsupported }
+        return .direct(deviceUID: output.uid)
+    }
+
+    /// 只有已经回读电量的可控耳机能进入菜单栏候选；未知值不生成占位候选。
+    var menuBarBatteryCandidates: [MenuBarBatteryCandidate] {
+        headphones.entries.compactMap { entry in
+            guard let reading = entry.controller.state.battery, reading.hasLevel else { return nil }
+            return MenuBarBatteryCandidate(deviceUID: entry.id,
+                                           displayName: entry.output.name,
+                                           reading: reading)
+        }
+    }
+
+    func menuBarBattery(for source: MenuBarBatterySource) -> MenuBarBatteryCandidate? {
+        MenuBarBatteryResolver.resolve(
+            source: source,
+            currentOutput: menuBarBatteryCurrentOutput,
+            candidates: menuBarBatteryCandidates
+        )
+    }
+
     var unmanagedMultiOutputs: [AudioOutput] {
         guard let audio else { return [] }
         return routing.unmanagedOutputs(in: audio)

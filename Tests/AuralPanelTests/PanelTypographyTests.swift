@@ -23,6 +23,30 @@ struct PanelTypographyTests {
         #expect(image.size.height == 27)
     }
 
+    @Test @MainActor func unknownCurrentModeDoesNotFakeASelectedTab() throws {
+        let width: CGFloat = 350
+        let noSelection = Optional<String>.none
+        let renderer = ImageRenderer(content:
+            PanelTabs(items: ["降噪", "通透"], selection: noSelection, title: { $0 }, select: { _ in })
+                .frame(width: width)
+                .background(PanelStyle.canvas)
+                .preferredColorScheme(.light)
+        )
+        let image = try #require(renderer.nsImage)
+        let tiff = try #require(image.tiffRepresentation)
+        let bitmap = try #require(NSBitmapImageRep(data: tiff))
+        let tabWidth = (width - 4) / 2
+        for index in 0..<2 {
+            let x = CGFloat(index) * (tabWidth + 4) + 16
+            let pixelX = Int(CGFloat(bitmap.pixelsWide) * x / width)
+            let color = try #require(
+                bitmap.colorAt(x: pixelX, y: bitmap.pixelsHigh / 2)?
+                    .usingColorSpace(.deviceRGB)
+            )
+            #expect(color.redComponent < 0.99)
+        }
+    }
+
     @Test(arguments: AudioPanelPage.allCases)
     @MainActor func selectedTabIsWhiteWhileOtherTwoKeepGrayCanvas(selection: AudioPanelPage) throws {
         let width = PanelMetrics.contentWidth

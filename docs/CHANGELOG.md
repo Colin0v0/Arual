@@ -2,6 +2,22 @@
 
 这里保留已记录的版本历史。历史条目描述当时的实现，不代表当前操作方式；当前用法请参阅 README。
 
+## 0.2.5 耳机能力 profile 与 Sony V2
+
+- 新增统一的耳机型号 profile、兼容性状态和能力模型；电量形状与噪声档位不再由品牌或固定三档推断。
+- Apple 耳机继续直接使用 BTAudio HAL 的 `lstm`/`lsms`：关闭、降噪、通透和自适应按真实能力显示，并修复切到其他模式后无法返回关闭的问题。
+- Sony 首次支持 MDR V2：根据 SDP 服务选择 V1/V2，使用 V2 的噪声读取/设置/通知和电池回包；没有确认 V2 服务时绝不发送 V2 电池命令。
+- 增加 Sony WH-1000XM5、ULT WEAR、WH-1000XM6、WF-1000XM4/XM5/XM6、WH-CH720N 和 LinkBuds S 的型号 profile；未在 Aural 独立复验的型号明确标为实验性。
+- 新增 Bose QuietComfort Ultra Headphones (2nd Gen) BMAP 控制：固定 RFCOMM channel 2，先由产品 ID `0x4082` 确认身份，再发布电量和 Quiet / Aware 两档噪声控制；不伪造 Off，也不把其他 Bose 型号自动视为兼容。
+- 新增 Bose QuietComfort Ultra Earbuds 二代（`0x4062`）：支持 Quiet / Aware，按产品 ID 解析左耳、右耳和充电盒电量；部件暂不可读时清除旧读数，不用合并电量补齐，也不推断充电或佩戴状态。仍标为上游已验证，等待 Aural 真机验收。
+- 新增 Bose QuietComfort Headphones（`0x4075`）和 QuietComfort 45（`0x4039`）的 SPP 控制路径；QC45 必须先完成 legacy 初始化，再查询产品身份，`PROCESSING` 只触发回读轮询，不重复发送 SET。
+- 新增 Sennheiser ACCENTUM Wireless（`ACAEBT`）GAIA V3 控制：独立 ANC / 通透开关、电量读取和双回读确认；只接受核验后的型号，不把 Plus、True Wireless 或 MOMENTUM 4 套用同一协议。
+- AirPods Max 等没有可用入耳检测的 Apple 头戴式设备不再因佩戴状态未知而永久隐藏模式控制；系统只报告 `Main` 电量时按整机电量显示，不补造左右耳或充电盒数值。
+- 修复 Bose 未知模式仍显示旧选中状态、模式回读前提前发布能力，以及发送失败被重复处理而取消重连的问题；身份未确认和控制已停止时不再接收功能读数。
+- 严格校验 Bose 帧头与该型号的整机电量，拒绝猜测帧边界或借用其他产品的电量部件；OPPO 电量解析拒绝截断、重复部件和越界读数，未知部件不再影响充电状态。
+- 增加耳机诊断中的型号 profile、兼容性、实际可显示档数和电量能力；补充社区真机测试矩阵与第三方 Sony V2 来源说明。
+- 版本提升到 0.2.5（26）。硬件结果按来源区分：上游验证不等于 Aural 本机验收。
+
 ## 0.2.4 设置页本地化修复
 
 - 修复英文或跟随系统英文语言时，设置页“关闭 / 开启”布尔控件仍显示中文的问题；设置页现在会统一向子控件注入当前语言环境。

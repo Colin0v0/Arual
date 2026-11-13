@@ -51,8 +51,19 @@ enum StatusItemMenu {
 
 /// 菜单栏只显示已经由真实设备回读的电量，不用占位值或推测电量。
 enum StatusItemBatteryText {
-    static func title(enabled: Bool, percent: Int?) -> String {
-        guard enabled, let percent, (0...100).contains(percent) else { return "" }
-        return "\(percent)%"
+    static func title(reading: HeadphoneBatteryReading?) -> String {
+        guard let reading else { return "" }
+        return HeadphoneBatteryText.compact(reading)
+    }
+
+    static func toolTip(reading: HeadphoneBatteryReading, deviceName: String,
+                        language: AppLanguage) -> String? {
+        let detail = HeadphoneBatteryText.detail(reading, language: language)
+        guard !detail.isEmpty else { return nil }
+        var parts = ["Aural", deviceName, detail]
+        if reading.isCharging == true {
+            parts.append(L10n.text("正在充电", language: language))
+        }
+        return parts.joined(separator: " · ")
     }
 }

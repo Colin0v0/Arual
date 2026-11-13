@@ -116,11 +116,7 @@ struct SettingsView: View {
                 isOn: simultaneousOutputBinding
             )
             PanelDivider()
-            SettingsToggleRow(
-                title: settings.localized("显示当前设备剩余电量"),
-                detail: settings.localized("在菜单栏 Aural 图标右侧显示当前设备电量。"),
-                isOn: $settings.showCurrentDeviceBattery
-            )
+            MenuBarBatterySettingsRow(settings: settings, group: model.headphones)
         }
     }
 
@@ -273,5 +269,79 @@ struct SettingsToggleRow: View {
         // 标题和说明与分组标题使用同一左边缘。
         .padding(.vertical, 8)
         .frame(minHeight: 52)
+    }
+}
+
+/// 电量来源是单选而不是开关；固定目标断开时仍保留选择，但菜单栏不显示替代耳机。
+struct MenuBarBatterySettingsRow: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var group: HeadphoneControllerGroup
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(settings.localized("菜单栏电量"))
+                    .font(PanelStyle.bodyFont)
+                Text(settings.localized("固定设备断开后隐藏。"))
+                    .font(PanelStyle.captionFont)
+                    .foregroundStyle(PanelStyle.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            // 外壳继续使用设置页现有白底细边框；展开项交给原生 NSMenu，避免自制菜单的视觉与键盘行为偏差。
+            BatterySourceMenu(
+                title: title(for: settings.menuBarBatterySource),
+                selected: settings.menuBarBatterySource,
+                items: sourceMenuItems,
+                onSelect: { settings.menuBarBatterySource = $0 }
+            )
+            // 标题有多长就展示多长，不再用固定 150pt 截断成省略号。
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(settings.localized("菜单栏电量"))
+        }
+        .padding(.vertical, 8)
+        .frame(minHeight: 52)
+    }
+
+    private var sourceMenuItems: [BatterySourceMenu.Item] {
+        var items = [
+            BatterySourceMenu.Item(title: settings.localized("不显示"), source: .off),
+            BatterySourceMenu.Item(title: settings.localized("跟随当前输出"), source: .currentOutput)
+        ]
+        for (index, entry) in group.entries.enumerated() {
+            items.append(BatterySourceMenu.Item(
+                title: settings.localizedFormat("固定：%@", entry.output.name),
+                source: .pinned(deviceUID: entry.id),
+                separatorBefore: index == 0
+            ))
+        }
+        if let disconnectedPinnedSource {
+            items.append(BatterySourceMenu.Item(
+                title: title(for: disconnectedPinnedSource),
+                source: disconnectedPinnedSource,
+                enabled: false
+            ))
+        }
+        return items
+    }
+
+    private func title(for source: MenuBarBatterySource) -> String {
+        switch source {
+        case .off:
+            return settings.localized("不显示")
+        case .currentOutput:
+            return settings.localized("跟随当前输出")
+        case .pinned(let deviceUID):
+            guard let entry = group.entries.first(where: { $0.id == deviceUID }) else {
+                return settings.localized("固定设备（未连接）")
+            }
+            return settings.localizedFormat("固定：%@", entry.output.name)
+        }
+    }
+
+    private var disconnectedPinnedSource: MenuBarBatterySource? {
+        guard case .pinned(let deviceUID) = settings.menuBarBatterySource,
+              !group.entries.contains(where: { $0.id == deviceUID }) else { return nil }
+        return settings.menuBarBatterySource
     }
 }

@@ -25,6 +25,38 @@
 - 许可全文：[ThirdParty/PodsControl/LICENSE](ThirdParty/PodsControl/LICENSE)，随本地 `.app` 一起分发。
 - Aural 仅依据其公开实现确认 BTAudio HAL 的 `lstm`/`lsms` 选择器及 `off=1`、`noise-cancellation=2`、`transparency=3`、`adaptive=4` 线值；Aural 的控制器、无 fallback 错误处理、异步写入与有界回读均为独立实现。
 
+## Sony ULT ctl — MIT
+
+- 仓库：https://github.com/Leonard013/sony-ult-ctl
+- 固定来源提交：`1909b85527df1e5fffffee0b7e011e86f9d111e0`
+- Copyright (c) 2026 Leonard013
+- 许可全文：[ThirdParty/SonyULTCtl/LICENSE](ThirdParty/SonyULTCtl/LICENSE)，随本地 `.app` 一起分发。
+- Aural 采用其公开记录的 Sony V2 噪声控制 `66/67/68/69 17` 布局、`0x22/0x23` 电池查询和 ULT WEAR 实测结果；没有复制其 Python UI、RFCOMM 连接管理器或命令行工具。
+
+## bosectl — MIT
+
+- 仓库：https://github.com/aaronsb/bosectl
+- 固定来源提交：`70570b29c1d3c9ba775b08a29eaea72385de27b5`
+- Copyright (c) 2026 Aaron Bockelie
+- 许可全文：[ThirdParty/BoseCtl/LICENSE](ThirdParty/BoseCtl/LICENSE)，随本地 `.app` 一起分发。
+- Aural 依据其公开记录的 Bose BMAP `[fblock, function, flags, length, payload]` 帧、RFCOMM channel 2、`0x4082` / `0x4062` 产品 ID、`[2.2]` 整机与分部件电池和 `[31.3]` AudioModes 协议事实，独立实现 Swift 分帧、传输生命周期、状态机和回读验证。
+- 入耳款分帧测试向量来自其 `fixtures/packets/qc-ultra2-earbuds/battery-status.hex`；右耳、左耳、盒的部件编号依据 edith 真机记录。Aural 不使用其合并电量后备计算，也不从电量推断充电或佩戴状态。
+- QuietComfort Headphones / QC45 的 SPP 入口、QC45 legacy 初始化顺序和 `PROCESSING` 回读行为依据其 `prince` / `duran` 型号记录；Aural 仅将其用于对应产品 ID，不把 Ultra 的 channel 2 命令套用到其他型号。
+- 没有复制其 Python/C++/Rust 实现、命令行界面、模式配置编辑、认证流程或其他 Bose 型号适配。
+
+## Sennheiser GAIA 协议研究 — 事实来源
+
+- 研究记录：https://github.com/Oein/sennheiser-desktop-client
+- 本地记录：`/tmp/aural-headphone-research/sennheiser-PROTOCOL.md`
+- Aural 只依据其中公开的 GAIA V3 帧格式、ACCENTUM 真机抓包、命令 ID、通知 ID 和 ANC / 通透开关事实，独立实现 Swift 分帧、RFCOMM 生命周期、状态机和回读确认。
+- 该仓库未找到可确认的统一许可证，因此 Aural 没有复制或翻译其源代码、UI、命令行工具或其他实现；这里记录的是协议事实与抓包来源，不构成源代码再分发。
+
+## JBL 协议研究（未接入）
+
+- 仓库：https://github.com/emperorbug46/JblTray
+- 许可：MIT
+- Aural 只阅读其 JBL Tune Flex 2 的 BLE GATT 服务、电量和 ANC 命令记录，用于评估兼容性。当前没有复制代码，也没有把 JBL 标记为支持：macOS 公开 CoreBluetooth API 不提供可与 Core Audio 输出稳定关联的 BLE MAC，名称匹配不能证明是同一台设备。
+
 ## FineTune：实现研究（不包含源代码）
 
 - 仓库：https://github.com/ronitsingh10/FineTune
@@ -48,8 +80,8 @@
 |---|---|---|
 | Sources/AuralCore/HeadphoneModels.swift | Core/HeadphoneProvider.swift、Providers/BowersWilkins/BowersWilkinsProvider.swift | 复用厂商家族预筛选、LE_BWHP 通用广播规则与原代 Px8 ANC 线值；不复制 RSSI 后备选择 |
 | Sources/AuralCore/HeadBridge/Sony/SonyMDRProtocol.swift | Providers/Sony/SonyMDRProtocol.swift | 保留帧、解析器、型号线值与能力表 |
-| Sources/AuralCore/HeadBridge/Sony/SonyRFCOMMTransport.swift | Providers/Sony/SonyRFCOMMTransport.swift | 加入真实系统输出 UID 检查与可恢复传输错误分类，不在 V1 失败后尝试 V2 |
-| Sources/AuralCore/HeadBridge/Sony/SonyV1Client.swift | Providers/Sony/SonyV1Client.swift | 保留 ACK/命令队列/响应解码；删除超时即认定初始化或就绪的分支及静默跳过超时命令；只请求基础状态；增加发送/验证事件与输出绑定 |
+| Sources/AuralCore/HeadBridge/Sony/SonyRFCOMMTransport.swift | Providers/Sony/SonyRFCOMMTransport.swift | 加入真实系统输出 UID 检查、可恢复传输错误分类，并依据 SDP 服务选择 V1/V2 |
+| Sources/AuralCore/HeadBridge/Sony/SonyV1Client.swift | Providers/Sony/SonyV1Client.swift | 保留 ACK/命令队列/响应解码；共享 V1/V2 传输生命周期，增加 V2 初始查询、回读和发送/验证事件；不静默跳过超时命令 |
 | Sources/AuralCore/HeadBridge/OPPO/OppoProtocol.swift | Providers/OPPO/OppoProtocol.swift | 保留基础帧、解析器、产品 ID/电量/噪声映射；类型接入 Aural，移除未使用的高级状态/响铃功能 |
 | Sources/AuralCore/HeadBridge/OPPO/OppoRFCOMMTransport.swift | Providers/OPPO/OppoRFCOMMTransport.swift | 加入真实输出绑定与可恢复传输错误分类 |
 | Sources/AuralCore/HeadBridge/TransportSupport.swift | Providers/BowersWilkins/BowersWilkinsProvider.swift 的 TransportLogEntry.Direction | 仅保留日志方向接口，其余为 Aural 的输出检查 |

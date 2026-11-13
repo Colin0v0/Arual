@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import AuralCore
 
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system
@@ -53,7 +54,8 @@ final class AppSettings: ObservableObject {
         static let appearance = "local.aural.settings.appearance"
         static let headphones = "local.aural.settings.showHeadphones"
         static let simultaneousOutput = "local.aural.settings.showSimultaneousOutput"
-        static let currentDeviceBattery = "local.aural.settings.showCurrentDeviceBattery"
+        static let menuBarBatterySource = "local.aural.settings.menuBarBatterySource"
+        static let legacyCurrentDeviceBattery = "local.aural.settings.showCurrentDeviceBattery"
     }
 
     private let defaults: UserDefaults
@@ -73,8 +75,8 @@ final class AppSettings: ObservableObject {
     @Published var showSimultaneousOutput: Bool {
         didSet { defaults.set(showSimultaneousOutput, forKey: Key.simultaneousOutput) }
     }
-    @Published var showCurrentDeviceBattery: Bool {
-        didSet { defaults.set(showCurrentDeviceBattery, forKey: Key.currentDeviceBattery) }
+    @Published var menuBarBatterySource: MenuBarBatterySource {
+        didSet { defaults.set(menuBarBatterySource.storageValue, forKey: Key.menuBarBatterySource) }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -84,7 +86,17 @@ final class AppSettings: ObservableObject {
         // 耳机控制、多设备输出与菜单栏电量都是可选能力，首次启动默认关闭。
         showHeadphoneControls = defaults.object(forKey: Key.headphones) as? Bool ?? false
         showSimultaneousOutput = defaults.object(forKey: Key.simultaneousOutput) as? Bool ?? false
-        showCurrentDeviceBattery = defaults.object(forKey: Key.currentDeviceBattery) as? Bool ?? false
+        if let stored = defaults.string(forKey: Key.menuBarBatterySource),
+           let source = MenuBarBatterySource(storageValue: stored) {
+            menuBarBatterySource = source
+        } else if let legacyEnabled = defaults.object(forKey: Key.legacyCurrentDeviceBattery) as? Bool {
+            // 旧版本只有一个布尔开关：明确映射为关闭或跟随当前输出，不推断固定设备。
+            let migrated: MenuBarBatterySource = legacyEnabled ? .currentOutput : .off
+            menuBarBatterySource = migrated
+            defaults.set(migrated.storageValue, forKey: Key.menuBarBatterySource)
+        } else {
+            menuBarBatterySource = .off
+        }
     }
 
     var resolvedLanguage: AppLanguage {
@@ -180,9 +192,13 @@ enum L10n {
         "显示多设备输出": "Show Multi-Device Output",
         "关闭后，多设备输出功能从输出面板隐藏。":
             "Show multi-device output options.",
-        "显示当前设备剩余电量": "Show Device Battery",
-        "在菜单栏 Aural 图标右侧显示当前设备电量。":
-            "Show battery in the menu bar.",
+        "菜单栏电量": "Menu Bar Battery",
+        "固定设备断开后隐藏。": "Pinned devices hide when offline.",
+        "不显示": "Don't Show",
+        "跟随当前输出": "Follow Current Output",
+        "固定：%@": "Pinned: %@",
+        "固定设备（未连接）": "Pinned Device (Disconnected)",
+        "左键打开/收起，右键更多操作": "Left-click to open or close; right-click for more.",
         "输出": "Output",
         "麦克风": "Microphone",
         "音频控制": "Audio Control",

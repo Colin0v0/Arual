@@ -208,8 +208,7 @@ struct OppoBattery: Equatable {
     var caseLevel: Int?
     var isCharging = false
 
-    /// HeadBridge exposes one battery percentage per device. Report the lowest
-    /// earbud so the menu never claims more charge than either bud has.
+    /// 仅用于需要单值摘要的兼容计算；界面和菜单栏会保留左右耳及充电盒的原始部件值。
     var lowestEarbudLevel: Int? {
         switch (left, right) {
         case let (left?, right?): min(left, right)
@@ -217,6 +216,10 @@ struct OppoBattery: Equatable {
         case let (nil, right?): right
         case (nil, nil): caseLevel
         }
+    }
+
+    var batteryReading: HeadphoneBatteryReading {
+        HeadphoneBatteryReading(left: left, right: right, caseLevel: caseLevel, isCharging: isCharging)
     }
 }
 
@@ -226,18 +229,20 @@ enum OppoBatteryCodec {
     static func decode(_ payload: [UInt8]) -> OppoBattery? {
         guard payload.count >= 2, payload[0] == 0x00 else { return nil }
         let count = Int(payload[1])
-        guard count > 0, count <= 8 else { return nil }
+        // count 声明的记录必须完整到达；不能在截断处 break 后发布半份读数。
+        guard count > 0, count <= 8, payload.count >= 2 + count * 2 else { return nil }
 
         var reading = OppoBattery()
+        var seen: Set<UInt8> = []
         var cursor = 2
         for _ in 0..<count {
-            guard cursor + 1 < payload.count else { break }
             let identifier = payload[cursor]
             let rawLevel = payload[cursor + 1]
             cursor += 2
-            guard identifier != 0xFF else { continue }
-
+            // 不认识的扩展部件不参与电量或充电判断；已知部件重复或越界则明确拒绝。
+            guard (1...3).contains(identifier) else { continue }
             let level = Int(rawLevel & 0x7F)
+            guard seen.insert(identifier).inserted, level <= 100 else { return nil }
             if rawLevel & 0x80 != 0 {
                 reading.isCharging = true
             }

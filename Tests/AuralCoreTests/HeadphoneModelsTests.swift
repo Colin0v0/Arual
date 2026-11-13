@@ -11,7 +11,31 @@ struct HeadphoneModelsTests {
             #expect(HeadphoneFamily.recognize(name) == .sony)
         }
         #expect(HeadphoneFamily.recognize("OPPO Enco Air5s") == .oppo)
+        for name in [
+            "Bose QuietComfort Ultra Headphones (2nd Gen)",
+            "Bose QC Ultra Headphones",
+            "Colin QC Ultra Headphones",
+            "Bose QuietComfort Ultra Earbuds (2nd Gen)",
+            "Bose QC Ultra Earbuds",
+            "Bose QC45",
+            "Bose QuietComfort Headphones",
+        ] {
+            #expect(HeadphoneFamily.recognize(name) == .bose)
+        }
+        for name in ["Sennheiser ACCENTUM Wireless", "ACCENTUM Wireless"] {
+            #expect(HeadphoneFamily.recognize(name) == .sennheiser)
+        }
         for name in ["MacBook Air", "Sony TV", "AirPods Pro", "LE_BWHP"] {
+            #expect(HeadphoneFamily.recognize(name) == nil)
+        }
+        for name in [
+            "Bose QuietComfort 35",
+            "Bose SoundLink Flex",
+            "Bose QuietComfort Earbuds II",
+            "Sennheiser ACCENTUM Plus",
+            "Sennheiser ACCENTUM True Wireless",
+            "Sennheiser MOMENTUM 4",
+        ] {
             #expect(HeadphoneFamily.recognize(name) == nil)
         }
         #expect(HeadphoneFamily.isBowersWilkinsAdvertisement("LE_BWHP"))

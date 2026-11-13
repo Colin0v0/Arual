@@ -2,13 +2,15 @@ import Foundation
 
 /// 系统最近上报的各部件电量；缺失值保持未知，充电盒不参与耳机电量汇总。
 public struct AppleHeadphoneBattery: Equatable, Sendable {
+    /// 头戴式或系统只提供单一电量时使用；左右耳和充电盒仍各自保留。
+    public let main: Int?
     public let left: Int?
     public let right: Int?
     public let caseLevel: Int?
-    public init(left: Int? = nil, right: Int? = nil, caseLevel: Int? = nil) {
-        self.left = left; self.right = right; self.caseLevel = caseLevel
+    public init(main: Int? = nil, left: Int? = nil, right: Int? = nil, caseLevel: Int? = nil) {
+        self.main = main; self.left = left; self.right = right; self.caseLevel = caseLevel
     }
-    public var earbudLevel: Int? { [left, right].compactMap { $0 }.min() }
+    public var earbudLevel: Int? { [main, left, right].compactMap { $0 }.min() }
 }
 
 /// 唯一电量数据源是系统蓝牙报告；按真实地址匹配，不按可修改的设备名配对。
@@ -67,6 +69,7 @@ final class AppleHeadphoneBatteryStore {
             struct Adapter: Decodable { let device_connected: [[String: Device]]? }
             struct Device: Decodable {
                 let device_address: String?
+                let device_batteryLevelMain: String?
                 let device_batteryLevelLeft: String?
                 let device_batteryLevelRight: String?
                 let device_batteryLevelCase: String?
@@ -87,9 +90,11 @@ final class AppleHeadphoneBatteryStore {
                 for device in entry.values {
                     guard let reportedAddress = device.device_address,
                           let address = HeadphonePhysicalIdentity.canonicalAddress(reportedAddress) else { continue }
-                    let battery = try AppleHeadphoneBattery(left: percent(device.device_batteryLevelLeft),
+                    let battery = try AppleHeadphoneBattery(main: percent(device.device_batteryLevelMain),
+                        left: percent(device.device_batteryLevelLeft),
                         right: percent(device.device_batteryLevelRight), caseLevel: percent(device.device_batteryLevelCase))
-                    guard battery.left != nil || battery.right != nil || battery.caseLevel != nil else { continue }
+                    guard battery.main != nil || battery.left != nil || battery.right != nil
+                        || battery.caseLevel != nil else { continue }
                     guard result[address] == nil else { throw AudioFailure("系统蓝牙报告包含重复设备地址") }
                     result[address] = battery
                 }

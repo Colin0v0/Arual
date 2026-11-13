@@ -33,10 +33,24 @@ enum HeadphoneDiagnostic {
                    controller.family == .apple || controller.state.battery != nil {
                     result["status"] = "confirmed"
                     result["physicalIdentityVerified"] = controller.identityVerified
-                    result["battery"] = controller.state.battery.map { $0 as Any } ?? NSNull()
+                    if let battery = controller.state.battery {
+                        // 诊断输出保留每个真实部件值，菜单栏的紧凑摘要不写回数据层。
+                        // 单值字段只表示协议整机电量，不借用左耳或盒电量冒充。
+                        result["battery"] = battery.single ?? NSNull()
+                        result["batteryLeft"] = battery.left ?? NSNull()
+                        result["batteryRight"] = battery.right ?? NSNull()
+                        result["batteryCase"] = battery.caseLevel ?? NSNull()
+                        result["batteryCharging"] = battery.isCharging ?? NSNull()
+                    } else {
+                        result["battery"] = NSNull()
+                    }
                     result["noiseMode"] = controller.state.noiseMode.map { $0.rawValue as Any } ?? NSNull()
                     result["family"] = controller.family?.rawValue
                     result["supportedNoiseModes"] = controller.supportedNoiseModes.map(\.rawValue)
+                    result["noiseModeCount"] = controller.capabilities.noiseModeCount
+                    result["batteryCapability"] = controller.capabilities.battery?.rawValue
+                    result["modelProfile"] = controller.modelProfile?.id
+                    result["compatibility"] = controller.modelProfile?.compatibility.rawValue
                     result["boundOutputUID"] = controller.boundOutputUID
                     code = 0
                     break
