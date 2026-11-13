@@ -49,6 +49,15 @@ final class AppModel: ObservableObject {
     /// 仅按稳定 bundle 身份保存；界面行 ID 可能是临时的 unassigned/pid 身份。
     @Published private(set) var appAudioRoutes: [String: AppAudioRoute] = [:]
     @Published private(set) var appAudioRoutePersistenceError: String?
+    /// 每个应用的音效设置独立于音量、静音和路由，按 bundle 身份持久化。
+    @Published private(set) var appAudioEffects: [String: AppAudioEffectSettings] = [:]
+    @Published private(set) var appAudioEffectPersistenceError: String?
+    /// 自定义预设全局共享；每个 App 只引用预设 ID，后续重命名不会破坏已有引用。
+    @Published private(set) var appAudioEffectCustomPresets: [AppAudioEffectCustomPreset] = []
+    /// A/B 只旁路当前窗口的试听，不修改持久化开关，也不会让其他 App 暂时静音。
+    @Published private(set) var bypassedApplicationAudioEffectKeys: Set<String> = []
+    /// 总开关只控制功能入口和运行时音效，不清除各应用已保存的预设。
+    @Published private(set) var applicationEffectsEnabled = false
     @Published var operationError: String?
     @Published private(set) var cleanupErrors: [String: String] = [:]
     @Published private(set) var outputRouting = OutputRoutingState()
@@ -62,6 +71,7 @@ final class AppModel: ObservableObject {
     private let routing: OutputRoutingController
     private let applicationEnvironment: ApplicationAudioEnvironment?
     private let appAudioRouteStore: AppAudioRouteStore
+    private let appAudioEffectStore: AppAudioEffectStore
     private var routingNow: Date {
         if let applicationEnvironment { return applicationEnvironment.now() }
         return Date()
@@ -104,7 +114,8 @@ final class AppModel: ObservableObject {
 
     /// 正式应用在主线程显式取得 HAL，避免默认参数在非隔离上下文读取主线程状态。
     convenience init(startsMonitoring: Bool = true) {
-        self.init(outputHardware: .live, startsMonitoring: startsMonitoring)
+        self.init(outputHardware: .live, startsMonitoring: startsMonitoring,
+                  appAudioEffectsEnabled: AppSettings.shared.appAudioEffectsEnabled)
     }
 
     /// 测试可注入只驻留内存的 HAL，并关闭系统监听，避免测试修改用户的音频设置。
@@ -112,7 +123,9 @@ final class AppModel: ObservableObject {
          applicationAudio: ApplicationAudioEnvironment? = nil,
          headphoneControllerFactory: (() -> HeadphoneController)? = nil,
          userIsSelectingOutput: (() -> Bool)? = nil,
-         appAudioRouteStore: AppAudioRouteStore? = nil) {
+         appAudioRouteStore: AppAudioRouteStore? = nil,
+         appAudioEffectStore: AppAudioEffectStore? = nil,
+         appAudioEffectsEnabled: Bool = false) {
         if let headphoneControllerFactory {
             self.headphones = HeadphoneControllerGroup(makeController: headphoneControllerFactory)
         } else { self.headphones = HeadphoneControllerGroup() }
@@ -121,6 +134,9 @@ final class AppModel: ObservableObject {
         self.monitorsSystem = startsMonitoring
         let routeStore = appAudioRouteStore ?? AppAudioRouteStore()
         self.appAudioRouteStore = routeStore
+        let effectStore = appAudioEffectStore ?? AppAudioEffectStore()
+        self.appAudioEffectStore = effectStore
+        self.applicationEffectsEnabled = appAudioEffectsEnabled
         if let applicationAudio { self.applicationEnvironment = applicationAudio }
         else if startsMonitoring { self.applicationEnvironment = .live }
         else { self.applicationEnvironment = nil }
@@ -151,6 +167,18 @@ final class AppModel: ObservableObject {
             appAudioRoutes = try routeStore.load()
         } catch {
             appAudioRoutePersistenceError = error.localizedDescription
+            operationError = error.localizedDescription
+        }
+        do {
+            appAudioEffects = try effectStore.load()
+        } catch {
+            appAudioEffectPersistenceError = error.localizedDescription
+            operationError = error.localizedDescription
+        }
+        do {
+            appAudioEffectCustomPresets = try effectStore.loadPresets()
+        } catch {
+            appAudioEffectPersistenceError = error.localizedDescription
             operationError = error.localizedDescription
         }
         refresh()
@@ -550,6 +578,190 @@ final class AppModel: ObservableObject {
         ).unavailableDeviceUIDs
     }
 
+    /// 界面读取保存的完整设置；总开关关闭时仍保留预设和滑块值。
+    func applicationAudioEffect(for applicationID: String) -> AppAudioEffectSettings {
+        guard let key = applicationRouteStorageKey(for: applicationID) else { return .disabled }
+        return appAudioEffects[key] ?? .disabled
+    }
+
+    /// 只有总开关打开且该 App 明确启用时才进入真实音频处理。
+    func effectiveApplicationAudioEffect(for applicationID: String) -> AppAudioEffectSettings? {
+        guard applicationEffectsEnabled else { return nil }
+        guard let key = applicationRouteStorageKey(for: applicationID),
+              !bypassedApplicationAudioEffectKeys.contains(key) else { return nil }
+        let settings = applicationAudioEffect(for: applicationID)
+        return settings.enabled ? settings : nil
+    }
+
+    func isApplicationAudioEffectBypassed(for applicationID: String) -> Bool {
+        guard let key = applicationRouteStorageKey(for: applicationID) else { return false }
+        return bypassedApplicationAudioEffectKeys.contains(key)
+    }
+
+    /// A/B 只在本次试听窗口内生效；窗口关闭时必须清除，避免留下不可见的后台旁路。
+    func setApplicationAudioEffectBypassed(_ bypassed: Bool, for applicationID: String) {
+        guard let key = applicationRouteStorageKey(for: applicationID) else { return }
+        var next = bypassedApplicationAudioEffectKeys
+        if bypassed {
+            next.insert(key)
+        } else {
+            next.remove(key)
+        }
+        guard next != bypassedApplicationAudioEffectKeys else { return }
+        bypassedApplicationAudioEffectKeys = next
+        // 直接更新已启动会话的原子参数；只走 reconcile 会等下一次协调，测试与真实 A/B 都可能保留旧音色。
+        if let session = sessions[applicationID], session.mode == .mixing {
+            session.setEffect(effectiveApplicationAudioEffect(for: applicationID))
+        }
+    }
+
+    /// 拖动推子时只更新实时原子参数；不写盘、不刷新整个应用列表、不重建音频会话。
+    func previewApplicationAudioEffect(_ settings: AppAudioEffectSettings,
+                                       for applicationID: String) {
+        guard settings.isValid else { return }
+        // 预览不覆盖正式设置；A/B 旁路时维持当前试听状态，直到用户退出旁路。
+        guard !isApplicationAudioEffectBypassed(for: applicationID) else { return }
+        if let session = sessions[applicationID], session.mode == .mixing {
+            session.setEffect(settings)
+        } else if let app = applications.first(where: { $0.id == applicationID }) {
+            reconcile(app)
+        }
+    }
+
+    /// 设置页总开关切换时不删除逐 App 配置，只让运行中的会话立即进入旁路或恢复音效。
+    func setApplicationEffectsEnabled(_ enabled: Bool) {
+        guard applicationEffectsEnabled != enabled else { return }
+        applicationEffectsEnabled = enabled
+        for app in applications { reconcile(app) }
+    }
+
+    /// UI 每次修改都保存同一份完整设置，避免预设、开关和滑块分散在多个存储键中。
+    func setApplicationAudioEffect(_ settings: AppAudioEffectSettings, for applicationID: String) {
+        guard settings.isValid else {
+            operationError = "应用音效增益必须在 -12～12 dB 之间"
+            return
+        }
+        guard let key = applicationRouteStorageKey(for: applicationID) else {
+            operationError = "该应用没有稳定身份，不能保存应用音效"
+            return
+        }
+
+        var next = appAudioEffects
+        next[key] = settings
+        do {
+            try appAudioEffectStore.save(next)
+        } catch {
+            appAudioEffectPersistenceError = error.localizedDescription
+            operationError = error.localizedDescription
+            return
+        }
+        appAudioEffects = next
+        appAudioEffectPersistenceError = nil
+        operationError = nil
+        // 已启动会话直接写原子参数；只有尚未进入 mixing 的应用才需要重新协调会话模式。
+        if let session = sessions[applicationID], session.mode == .mixing {
+            session.setEffect(effectiveApplicationAudioEffect(for: applicationID))
+        } else if let app = applications.first(where: { $0.id == applicationID }) {
+            reconcile(app)
+        }
+    }
+
+    /// 新建预设只接受用户当前十段参数；名称重复和空名称直接拒绝，不自动改名。
+    @discardableResult
+    func createApplicationAudioEffectPreset(named name: String,
+                                            eq: AppAudioEffectEQ) -> AppAudioEffectCustomPreset? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preset = AppAudioEffectCustomPreset(name: trimmed, eq: eq)
+        guard preset.isValid else {
+            operationError = "预设名称不能为空，且不能超过 40 个字符"
+            return nil
+        }
+        guard !appAudioEffectCustomPresets.contains(where: { $0.name == trimmed }) else {
+            operationError = "已存在同名预设"
+            return nil
+        }
+        let next = appAudioEffectCustomPresets + [preset]
+        guard saveApplicationAudioEffectPresets(next) else { return nil }
+        return preset
+    }
+
+    func renameApplicationAudioEffectPreset(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard appAudioEffectCustomPresets.contains(where: { $0.id == id }) else { return }
+        guard !trimmed.isEmpty, trimmed.count <= 40 else {
+            operationError = "预设名称不能为空，且不能超过 40 个字符"
+            return
+        }
+        guard !appAudioEffectCustomPresets.contains(where: { $0.id != id && $0.name == trimmed }) else {
+            operationError = "已存在同名预设"
+            return
+        }
+        var next = appAudioEffectCustomPresets
+        guard let index = next.firstIndex(where: { $0.id == id }) else { return }
+        next[index].name = trimmed
+        _ = saveApplicationAudioEffectPresets(next)
+    }
+
+    @discardableResult
+    func duplicateApplicationAudioEffectPreset(_ id: UUID) -> AppAudioEffectCustomPreset? {
+        guard let source = appAudioEffectCustomPresets.first(where: { $0.id == id }) else { return nil }
+        let language = AppSettings.shared.resolvedLanguage
+        let baseName = L10n.format("%@ 副本", language: language,
+                                   arguments: [source.name])
+        var candidate = baseName
+        var number = 2
+        while appAudioEffectCustomPresets.contains(where: { $0.name == candidate }) {
+            candidate = L10n.format("%@ 副本 %d", language: language,
+                                    arguments: [source.name, number])
+            number += 1
+        }
+        let duplicate = AppAudioEffectCustomPreset(name: candidate, eq: source.eq)
+        let next = appAudioEffectCustomPresets + [duplicate]
+        guard saveApplicationAudioEffectPresets(next) else { return nil }
+        return duplicate
+    }
+
+    /// 删除预设后，引用了它的 App 保留当前参数并转为“已修改”，不会静默套用另一套音色。
+    func deleteApplicationAudioEffectPreset(_ id: UUID) {
+        guard appAudioEffectCustomPresets.contains(where: { $0.id == id }) else { return }
+        let nextPresets = appAudioEffectCustomPresets.filter { $0.id != id }
+        guard saveApplicationAudioEffectPresets(nextPresets) else { return }
+
+        var nextEffects = appAudioEffects
+        var effectsChanged = false
+        for (key, settings) in appAudioEffects {
+            guard case .custom(let presetID) = settings.preset, presetID == id else { continue }
+            var updated = settings
+            updated.preset = .manual
+            nextEffects[key] = updated
+            effectsChanged = true
+        }
+        guard effectsChanged else { return }
+        do {
+            try appAudioEffectStore.save(nextEffects)
+            appAudioEffects = nextEffects
+            appAudioEffectPersistenceError = nil
+            for app in applications { reconcile(app) }
+        } catch {
+            appAudioEffectPersistenceError = error.localizedDescription
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func saveApplicationAudioEffectPresets(_ presets: [AppAudioEffectCustomPreset]) -> Bool {
+        do {
+            try appAudioEffectStore.savePresets(presets)
+            appAudioEffectCustomPresets = presets
+            appAudioEffectPersistenceError = nil
+            operationError = nil
+            return true
+        } catch {
+            appAudioEffectPersistenceError = error.localizedDescription
+            operationError = error.localizedDescription
+            return false
+        }
+    }
+
     /// 设置自定义路由会实际创建/重建应用的 Process Tap 重放链，而不是只改界面勾选。
     func setApplicationAudioRoute(_ route: AppAudioRoute, for applicationID: String) {
         guard refreshAudioCaptureAccess() else { return }
@@ -724,11 +936,14 @@ final class AppModel: ObservableObject {
             }
         }
         let requiresRouting = effectiveApplicationAudioRoute(for: app.id).isCustom
+        let effect = effectiveApplicationAudioEffect(for: app.id)
+        let requiresEffects = effect != nil
         guard let mode = ApplicationAudioIntent.mode(
             state: state,
             isPlaying: app.isRunningOutput,
             meterVisible: metersVisible,
-            requiresRouting: requiresRouting
+            requiresRouting: requiresRouting,
+            requiresEffects: requiresEffects
         ) else {
             stop(app.id)
             return
@@ -757,7 +972,13 @@ final class AppModel: ObservableObject {
            session.group.objectIDs == group.objectIDs, session.output.uid == output.uid,
            session.playbackRoute == expectedPlaybackRoute {
             do {
-                if mode == .mixing { try session.setGain(state.gain); session.setMuted(state.muted) }
+                if mode == .mixing {
+                    try session.setGain(state.gain)
+                    session.setMuted(state.muted)
+                    session.setEffect(effect)
+                } else {
+                    session.setEffect(nil)
+                }
                 try session.checkHealth(expectingAudio: app.isRunningOutput)
             } catch {
                 recordSessionFailure(error, for: app.id)
@@ -767,7 +988,7 @@ final class AppModel: ObservableObject {
             // 计量与混音共享所有权检查；必须完整释放旧 tap 后才能改变 muteBehavior。
             guard stop(app.id) else { return }
             start(group, output: output, state: state, mode: mode,
-                  playbackRoute: requestedPlaybackRoute)
+                  playbackRoute: requestedPlaybackRoute, effect: effect)
         }
     }
 
@@ -1063,7 +1284,8 @@ final class AppModel: ObservableObject {
 
     private func start(_ group: AudioProcessGroup, output: AudioOutput,
                        state: ApplicationMixState, mode: ApplicationAudioMode,
-                       playbackRoute: ApplicationPlaybackRoute?) {
+                       playbackRoute: ApplicationPlaybackRoute?,
+                       effect: AppAudioEffectSettings?) {
         guard !AudioSessionOwnership.overlaps(requested: group.objectIDs, existing: sessions.values.map { $0.group.objectIDs }) else {
             latchApplicationFailure("该音频流仍被尚未释放的旧会话持有，请先释放资源再重新应用。", for: group.id)
             return
@@ -1076,7 +1298,13 @@ final class AppModel: ObservableObject {
         let session = applicationEnvironment.makeSession(group, output, playbackRoute, mode)
         sessions[group.id] = session
         do {
-            if mode == .mixing { try session.setGain(state.gain); session.setMuted(state.muted) }
+            if mode == .mixing {
+                try session.setGain(state.gain)
+                session.setMuted(state.muted)
+                session.setEffect(effect)
+            } else {
+                session.setEffect(nil)
+            }
             try session.start()
             sessionRouteWaitSince.removeValue(forKey: group.id)
         } catch {

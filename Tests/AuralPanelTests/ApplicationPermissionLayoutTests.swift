@@ -17,7 +17,8 @@ struct ApplicationPermissionLayoutTests {
             let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
                                  applicationAudio: environment)
             let host = NSHostingView(rootView: ApplicationVolumeSection(
-                model: model, metersVisible: false, routingEnabled: false)
+                model: model, metersVisible: false, routingEnabled: false, effectsEnabled: false,
+                openApplicationAudioEffects: { _, _, _ in })
                 .environment(\.appLanguage, .chinese)
                 .frame(width: PanelMetrics.width))
             host.frame.size = host.fittingSize

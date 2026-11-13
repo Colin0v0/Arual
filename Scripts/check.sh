@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 TOOLCHAIN_USR="$(dirname "$(dirname "$(xcrun --find swiftc)")")"
 TESTING_PLUGIN="$TOOLCHAIN_USR/lib/swift/host/plugins/testing/libTestingMacros.dylib"
 test -f "$TESTING_PLUGIN"
+# 发布文案必须按版本独立维护，避免每次 Release 重复历史功能和旧版安装说明。
+./Scripts/check-release-notes.sh
 # 与 CI 一致串行运行：AppKit 窗口、滚动条与外观测试共享进程级状态。
 swift build --build-tests -Xswiftc -load-plugin-library -Xswiftc "$TESTING_PLUGIN"
 ./Scripts/prepare-test-resources.sh

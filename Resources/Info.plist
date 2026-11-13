@@ -7,11 +7,11 @@
     <key>CFBundleExecutable</key><string>Aural</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.5</string>
-    <key>CFBundleVersion</key><string>26</string>
+    <key>CFBundleShortVersionString</key><string>0.3.0</string>
+    <key>CFBundleVersion</key><string>27</string>
     <key>LSMinimumSystemVersion</key><string>15.4</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSAudioCaptureUsageDescription</key><string>用于调节应用音量与应用独立输出路由。</string>
+    <key>NSAudioCaptureUsageDescription</key><string>用于调节应用音量、应用独立输出路由与应用音效。</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>用于控制蓝牙耳机。</string>
 </dict></plist>

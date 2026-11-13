@@ -6,6 +6,7 @@ struct AudioPanel: View {
     @ObservedObject var layout: PanelPresentationLayout
     @ObservedObject private var updates = AuralUpdateChecker.shared
     let openSettings: () -> Void
+    var openApplicationAudioEffects: (String, String, URL?) -> Void = { _, _, _ in }
     let panelSizeChanged: (CGSize) -> Void
     let surface: MeterSurface
     @ObservedObject private var settings = AppSettings.shared
@@ -72,6 +73,8 @@ struct AudioPanel: View {
         .preferredColorScheme(settings.appearance.colorScheme)
         .environment(\.appLanguage, settings.resolvedLanguage)
         .onAppear {
+            // 模型独立于设置窗口生命周期；面板出现时同步一次总开关，避免直接读取窗口局部状态。
+            model.setApplicationEffectsEnabled(settings.appAudioEffectsEnabled)
             layout.selectPage(currentPage)
             model.setApplicationMetersSelected(applicationMetersSelected, for: surface)
         }
@@ -120,7 +123,9 @@ struct AudioPanel: View {
             ApplicationVolumeSection(model: model, metersVisible: metersVisible,
                                      routingEnabled: direction == .output
                                          && currentPage == .output
-                                         && model.applicationAudioRoutingEnabled)
+                                         && model.applicationAudioRoutingEnabled,
+                                     effectsEnabled: model.applicationEffectsEnabled,
+                                     openApplicationAudioEffects: openApplicationAudioEffects)
         }
     }
 
@@ -179,13 +184,19 @@ struct AudioPanel: View {
     }
 
     private var hasErrors: Bool {
-        model.audioError != nil || model.operationError != nil || !model.cleanupErrors.isEmpty
+        model.audioError != nil
+            || model.operationError != nil
+            || model.appAudioEffectPersistenceError != nil
+            || !model.cleanupErrors.isEmpty
     }
 
     private var errors: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let error = model.audioError { PanelError(text: settings.localized(error)) }
             if let error = model.operationError { PanelError(text: settings.localized(error)) }
+            if let error = model.appAudioEffectPersistenceError {
+                PanelError(text: settings.localized(error))
+            }
             ForEach(model.cleanupErrors.keys.sorted(), id: \.self) { key in
                 if let error = model.cleanupErrors[key] { PanelError(text: settings.localized(error)) }
             }

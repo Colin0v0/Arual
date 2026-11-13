@@ -45,7 +45,9 @@ struct PanelJitterDiagnosisTests {
         let animator = PanelSizeAnimator()
         let topLeft = CGPoint(x: originX, y: top)
         let host = NSHostingController(rootView: StatusPopupSurface {
-            AudioPanel(model: model, layout: layout, openSettings: {}, panelSizeChanged: { newSize in
+            AudioPanel(model: model, layout: layout, openSettings: {},
+                       openApplicationAudioEffects: { _, _, _ in },
+                       panelSizeChanged: { newSize in
                 guard newSize == layout.size else { return }
                 let target = StatusPopupMetrics.frame(topLeft: topLeft, size: newSize)
                 // 诊断当前菜单栏浮层的真实路径：宿主完成布局后一次性落到目标外框。

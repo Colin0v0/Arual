@@ -22,14 +22,24 @@ public struct GainRamp {
 // 回调不做 HAL 查询、日志、集合构造、锁等待或界面操作。
 final class RenderState {
     let target = Atomic<UInt32>(Float(1).bitPattern)
+    let effectWord = Atomic<UInt64>(AppAudioEffectParameterWord.pack(.disabled))
     let fault = Atomic<Bool>(false)
     let callbacks = Atomic<UInt64>(0)
     let peak = AudioPeakMailbox()
     let mode: ApplicationAudioMode
     var ramp: GainRamp
-    init(sampleRate: Double, initialGain: Float = 1, mode: ApplicationAudioMode = .mixing) {
+    var effects: AppAudioEffectDSP
+    init(sampleRate: Double, initialGain: Float = 1, mode: ApplicationAudioMode = .mixing,
+         effect: AppAudioEffectSettings? = nil) {
         self.mode = mode
         ramp = GainRamp(sampleRate: sampleRate, initial: initialGain)
+        effects = AppAudioEffectDSP(sampleRate: sampleRate)
+        effectWord.store(AppAudioEffectParameterWord.pack(effect), ordering: .relaxed)
+    }
+
+    /// 原子参数只保存用户意图；滤波器状态和系数表继续由已启动的音频会话独占。
+    func setEffect(_ settings: AppAudioEffectSettings?) {
+        effectWord.store(AppAudioEffectParameterWord.pack(settings), ordering: .relaxed)
     }
 }
 
@@ -152,6 +162,7 @@ let auralAudioCallback: AudioDeviceIOProc = { _, _, input, _, output, _, context
     let ins = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
     guard !ins.isEmpty, ins.count == outs.count else { state.fault.store(true, ordering: .relaxed); return noErr }
     var frames: Int?
+    var totalChannels = 0
     for i in ins.indices {
         let source = ins[i], destination = outs[i]
         guard source.mNumberChannels > 0, source.mNumberChannels == destination.mNumberChannels,
@@ -162,24 +173,63 @@ let auralAudioCallback: AudioDeviceIOProc = { _, _, input, _, output, _, context
         let count = Int(source.mDataByteSize / (4 * source.mNumberChannels))
         if let frames, frames != count { state.fault.store(true, ordering: .relaxed); return noErr }
         frames = count
+        totalChannels += Int(source.mNumberChannels)
         // HAL 可用空指针表示尚未有输入；保持本次静音，不虚构音频样本。
         guard source.mData != nil, destination.mData != nil else { return noErr }
     }
-    guard let frames else { return noErr }
+    guard let frames, (1...2).contains(totalChannels) else {
+        state.fault.store(true, ordering: .relaxed)
+        return noErr
+    }
     let target = Float(bitPattern: state.target.load(ordering: .relaxed))
+    // 计量模式只读取原声峰值；音效参数只有在真实重放时才进入湿声路径。
+    let effectWord = state.mode == .mixing
+        ? state.effectWord.load(ordering: .relaxed)
+        : AppAudioEffectParameterWord.pack(.disabled)
+    state.effects.beginBuffer(word: effectWord)
     var peak: Float = 0
     for frame in 0..<frames {
         let gain = state.mode == .mixing ? state.ramp.advance(toward: target) : 1
-        for i in ins.indices {
-            let source = ins[i].mData!.assumingMemoryBound(to: Float.self)
-            let destination = outs[i].mData!.assumingMemoryBound(to: Float.self)
-            let channels = Int(ins[i].mNumberChannels)
-            for channel in 0..<channels {
-                let index = frame * channels + channel
-                let sample = source[index] * gain
-                if sample.isFinite { peak = max(peak, abs(sample)) }
-                // 只读计量不重放捕获音频，避免原始声音与本进程的输出叠加。
-                if state.mode == .mixing { destination[index] = sample }
+        let effectsActive = state.mode == .mixing && state.effects.beginFrame()
+        if effectsActive {
+            var processed = (left: Float(0), right: Float(0))
+            var channelOffset = 0
+            for i in ins.indices {
+                let source = ins[i].mData!.assumingMemoryBound(to: Float.self)
+                let channels = Int(ins[i].mNumberChannels)
+                for channel in 0..<channels {
+                    let index = frame * channels + channel
+                    let dry = source[index] * gain
+                    let sample = state.effects.processPrelimiter(dry, channel: channelOffset + channel)
+                    if channelOffset + channel == 0 { processed.left = sample }
+                    else { processed.right = sample }
+                }
+                channelOffset += channels
+            }
+            let limited = state.effects.limitFrame(&processed, channels: totalChannels)
+            peak = max(peak, abs(limited.0), abs(limited.1))
+            channelOffset = 0
+            for i in ins.indices {
+                let destination = outs[i].mData!.assumingMemoryBound(to: Float.self)
+                let channels = Int(ins[i].mNumberChannels)
+                for channel in 0..<channels {
+                    let index = frame * channels + channel
+                    destination[index] = channelOffset + channel == 0 ? limited.0 : limited.1
+                }
+                channelOffset += channels
+            }
+        } else {
+            for i in ins.indices {
+                let source = ins[i].mData!.assumingMemoryBound(to: Float.self)
+                let destination = outs[i].mData!.assumingMemoryBound(to: Float.self)
+                let channels = Int(ins[i].mNumberChannels)
+                for channel in 0..<channels {
+                    let index = frame * channels + channel
+                    let sample = source[index] * gain
+                    if sample.isFinite { peak = max(peak, abs(sample)) }
+                    // 只读计量不重放捕获音频，避免原始声音与本进程的输出叠加。
+                    if state.mode == .mixing { destination[index] = sample }
+                }
             }
         }
     }
@@ -197,6 +247,7 @@ public final class ProcessAudioSession: ApplicationAudioSession {
     public let mode: ApplicationAudioMode
     public private(set) var gain: Float = 1
     public private(set) var muted = false
+    private var effectSettings: AppAudioEffectSettings?
     private var tapID: AudioObjectID = 0
     private var aggregateID: AudioObjectID = 0
     private var ioProc: AudioDeviceIOProcID?
@@ -283,7 +334,8 @@ public final class ProcessAudioSession: ApplicationAudioSession {
             let actual: AudioStreamBasicDescription = try HAL.read(aggregateID, HAL.address(kAudioDevicePropertyStreamFormat, scope: kAudioDevicePropertyScopeOutput), initial: AudioStreamBasicDescription())
             try Self.requireMatchingPCM(captured: format, current: actual)
             // 从零平滑到用户预设，避免首次拖到低音量时先瞬间按 100% 播放。
-            let state = RenderState(sampleRate: format.mSampleRate, initialGain: 0, mode: mode)
+            let state = RenderState(sampleRate: format.mSampleRate, initialGain: 0, mode: mode,
+                                    effect: mode == .mixing ? effectSettings : nil)
             state.target.store((muted ? Float(0) : gain).bitPattern, ordering: .relaxed)
             renderState = state
             try HAL.check(AudioDeviceCreateIOProcID(aggregateID, auralAudioCallback,
@@ -335,6 +387,10 @@ public final class ProcessAudioSession: ApplicationAudioSession {
     }
     public func setMuted(_ value: Bool) { muted = value; publishGain() }
     private func publishGain() { renderState?.target.store((muted ? Float(0) : gain).bitPattern, ordering: .relaxed) }
+    public func setEffect(_ settings: AppAudioEffectSettings?) {
+        effectSettings = mode == .mixing ? settings : nil
+        renderState?.setEffect(effectSettings)
+    }
 
     private func validateRoutes() throws {
         // HAL 默认路由确认后，各 APP 的进程对象仍可能稍晚更新；只读取事实，不阻塞主线程。
@@ -387,6 +443,7 @@ public final class ProcessAudioSession: ApplicationAudioSession {
             self.ioProc = nil
         }
         renderState = nil
+        effectSettings = nil
         activeFormat = nil
         if aggregateID != 0 {
             try HAL.check(AudioHardwareDestroyAggregateDevice(aggregateID), "释放应用输出设备")

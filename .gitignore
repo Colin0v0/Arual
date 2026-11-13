@@ -35,3 +35,5 @@ xcuserdata/
 /docs/*
 !/docs/CHANGELOG.md
 !/docs/HEADPHONE_COMPATIBILITY.md
+!/docs/releases/
+!/docs/releases/*.md

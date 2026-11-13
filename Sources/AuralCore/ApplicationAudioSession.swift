@@ -12,6 +12,8 @@ public protocol ApplicationAudioSession: AnyObject {
     var isReleased: Bool { get }
     func setGain(_ value: Float) throws
     func setMuted(_ value: Bool)
+    /// 音效参数通过会话拥有的原子槽下发；不重建 tap，也不在音频线程同步界面状态。
+    func setEffect(_ settings: AppAudioEffectSettings?)
     func start() throws
     func checkHealth(expectingAudio: Bool) throws
     func stop() throws

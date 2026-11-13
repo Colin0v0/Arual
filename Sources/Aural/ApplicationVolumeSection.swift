@@ -7,6 +7,10 @@ struct ApplicationVolumeSection: View {
     let metersVisible: Bool
     /// 应用路由只在输出页、且多设备组已确认时显示，麦克风页不提供输出路由入口。
     let routingEnabled: Bool
+    /// 音效总开关由设置页控制；关闭时保留各 App 已保存的参数但隐藏入口。
+    let effectsEnabled: Bool
+    /// 应用行只负责发起打开请求，窗口生命周期由 StatusPanelController 持有。
+    var openApplicationAudioEffects: (String, String, URL?) -> Void = { _, _, _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appLanguage) private var language
 
@@ -24,6 +28,7 @@ struct ApplicationVolumeSection: View {
                     if let error = model.appAudioRoutePersistenceError {
                         PanelError(text: L10n.text(error, language: language)).padding(16)
                     }
+                    // 持久化错误由主面板顶部统一显示，APP 区不重复撑高菜单栏浮层。
                     if let error = model.processError {
                         PanelError(text: L10n.text(error, language: language)).padding(16)
                     }
@@ -68,6 +73,12 @@ struct ApplicationVolumeSection: View {
                             retryMeter: { model.retryMeter(app.id) },
                             applyConfiguration: { model.applyApplication(app.id) },
                             stopManaging: { model.stopManaging(app.id) },
+                            effectsAvailable: effectsEnabled && model.hasStableApplicationRouteIdentity(app.id),
+                            audioEffect: model.applicationAudioEffect(for: app.id),
+                            updateAudioEffect: { model.setApplicationAudioEffect($0, for: app.id) },
+                            openApplicationAudioEffects: {
+                                openApplicationAudioEffects(app.id, app.label, app.applicationURL)
+                            },
                             routingEnabled: routingEnabled,
                             audioRoute: model.applicationAudioRoute(for: app.id),
                             routeOutputs: model.availableApplicationRouteOutputs,
@@ -84,6 +95,9 @@ struct ApplicationVolumeSection: View {
         if state.failure != nil { return L10n.text("未应用；请从选项中重新应用", language: language) }
         if model.processError != nil { return L10n.text("音频状态不可用", language: language) }
         if let session = model.sessions[app.id], session.isActive {
+            if model.effectiveApplicationAudioEffect(for: app.id) != nil {
+                return L10n.text("已启用应用音效", language: language)
+            }
             if model.effectiveApplicationAudioRoute(for: app.id).isCustom {
                 return L10n.text("已应用自定义路由", language: language)
             }

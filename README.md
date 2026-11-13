@@ -21,14 +21,15 @@
   <a href="docs/HEADPHONE_COMPATIBILITY.md">Headphone compatibility</a>
 </p>
 
-Aural is a native macOS menu bar app for taking control of your Mac’s audio:
-switch outputs and microphones, tune each app separately, play through
-multiple devices, and control compatible Bluetooth headphones.
+Aural keeps your Mac’s sound close at hand, right from the menu bar. Switch
+devices, give each app the level it needs, send audio to more than one place,
+and check on your headphones. Open an app’s Effects window when you want to
+shape its sound.
 
-> **Version 0.2.5**
+> **Current release: 0.3.0**
 >
-> Aural is distributed directly and is not Apple-notarized yet. macOS may ask
-> you to confirm the first launch.
+> Aural is distributed directly and is not notarized yet. macOS may ask you to
+> confirm the first launch.
 
 ## What you can do
 
@@ -39,13 +40,16 @@ multiple devices, and control compatible Bluetooth headphones.
   headphone at the same time.
 - **Route apps separately** — keep music on your headphones while browser audio
   stays on your speakers.
+- **Shape app sound** — open a dedicated window with a 10-band EQ fader bank,
+  response preview, custom presets, and Compare Original without changing the
+  app’s volume or output route.
 - **Control headphones** — check battery, switch noise modes, and manage
   multiple headphones in one place.
 - **Make it yours** — use English or Chinese, follow the system appearance, and
   enable only the features you need.
 
-Headphone controls and multiple outputs are off by default. Turn them on in
-Settings.
+App effects, headphone controls, and multi-device output are off by default.
+Turn on what you need in Settings.
 
 ## Multiple outputs, per-app routing
 
@@ -62,10 +66,20 @@ Changing one app’s route does not change other apps or the system output.
 Aural remembers custom routes across device disconnects and restores them when
 the device returns.
 
+## App effects
+
+Open an app’s Effects window from its row in Aural. Start with one of six
+built-in presets, save the current setup as your own, or use the ten faders to
+shape the sound. Rename or delete a custom preset from the toolbar while it is
+selected, and use Compare Original for a quick listen before and after.
+
+Effects are remembered per app. Volume, mute, and output routing stay as they
+were. Turn the feature on in Settings.
+
 ## Supported headphones
 
-Aural only shows a control after the connected device confirms that it supports
-it. Available features can vary by model, firmware, and macOS version.
+Aural shows controls only when the connected headphones provide them. What you
+see can vary by model, firmware, and macOS version.
 
 | Headphones | What Aural can do | Evidence |
 | --- | --- | --- |
@@ -84,7 +98,7 @@ it. Available features can vary by model, firmware, and macOS version.
 **Upstream verified** means the exact model was tested by the upstream protocol
 project; Aural still needs independent hardware acceptance. **Experimental**
 means the model is recognized, but the exact hardware has not been validated in
-the current build. Fast Pair battery is planned but not available in 0.2.5.
+the current build.
 
 See [Headphone compatibility](docs/HEADPHONE_COMPATIBILITY.md) for the full
 evidence matrix, research backlog, and community test-report checklist.
@@ -93,8 +107,7 @@ evidence matrix, research backlog, and community test-report checklist.
 
 1. Download the latest build from [GitHub Releases](https://github.com/Colin0v0/Aural/releases).
 2. Open the DMG and drag Aural into Applications.
-3. Launch Aural and allow Bluetooth or system-audio permissions when you want to
-   use those features.
+3. Launch Aural and allow Bluetooth or app-audio permissions when prompted.
 
 Aural targets **macOS 15.4 or later on Apple Silicon**.
 

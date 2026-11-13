@@ -5,6 +5,8 @@ import SwiftUI
 struct PanelVolumeSlider: View {
     @Binding var value: Double
     let label: String
+    /// 音效增益不是百分比，可注入 dB 文案；普通设备与应用音量继续使用百分比。
+    var accessibilityValueText: String? = nil
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focused: Bool
@@ -46,7 +48,7 @@ struct PanelVolumeSlider: View {
         .onKeyPress(.upArrow) { adjust(by: 0.05) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
-        .accessibilityValue("\(Int((value * 100).rounded()))%")
+        .accessibilityValue(accessibilityValueText ?? "\(Int((value * 100).rounded()))%")
         .accessibilityAdjustableAction { direction in
             guard isEnabled else { return }
             switch direction {

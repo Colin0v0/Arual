@@ -7,6 +7,46 @@ import Testing
 
 @MainActor
 struct OutputRoutingIntegrationTests {
+    @Test func appEffectsCreateRealMixingWithoutChangingGainOrRoute() throws {
+        let hardware = RoutingTestHardware()
+        let audio = SessionFixture()
+        let suite = "Aural.AppAudioEffectIntegration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(outputHardware: hardware.hardware, startsMonitoring: false,
+                             applicationAudio: audio.environment,
+                             appAudioEffectStore: AppAudioEffectStore(defaults: defaults),
+                             appAudioEffectsEnabled: true)
+        let applicationID = audio.row.id
+
+        var effect = AppAudioEffectSettings(enabled: true)
+        effect.apply(.voice)
+        model.setApplicationAudioEffect(effect, for: applicationID)
+
+        // 未拖动音量滑杆时，仅启用音效也必须进入真实 mixing，而不是只读计量。
+        #expect(model.mixStates[applicationID]?.managed == false)
+        #expect(audio.sessions.last?.mode == .mixing)
+        #expect(audio.sessions.last?.effect == effect)
+        #expect(audio.sessions.last?.gain == 1)
+        #expect(model.applicationAudioRoute(for: applicationID) == .allOutputs)
+
+        model.setApplicationGain(0.62, for: applicationID)
+        #expect(audio.sessions.last?.gain == 0.62)
+        #expect(audio.sessions.last?.effect == effect)
+        #expect(model.applicationAudioRoute(for: applicationID) == .allOutputs)
+
+        // 总开关关闭只旁路音效，不清除 App 保存的参数，也不重置音量。
+        model.setApplicationEffectsEnabled(false)
+        #expect(audio.sessions.last?.effect == nil)
+        #expect(model.mixStates[applicationID]?.gain == 0.62)
+        #expect(model.applicationAudioEffect(for: applicationID) == effect)
+        model.setApplicationEffectsEnabled(true)
+        #expect(audio.sessions.last?.effect == effect)
+
+        #expect(model.shutdown())
+    }
+
     @Test func transientBluetoothSnapshotPendingDoesNotLatchAnOutputError() {
         let hardware = RoutingTestHardware()
         let audio = SessionFixture()
@@ -916,7 +956,7 @@ struct OutputRoutingIntegrationTests {
 }
 
 @MainActor
-private final class SessionFixture {
+final class SessionFixture {
     var playing = true
     var captureAccess: SystemAudioCaptureAccess = .authorized
     var omitsApplication = false
@@ -949,7 +989,7 @@ private final class SessionFixture {
 }
 
 @MainActor
-private final class MemoryAudioSession: ApplicationAudioSession {
+final class MemoryAudioSession: ApplicationAudioSession {
     let group: AudioProcessGroup
     let output: AudioOutput
     let mode: ApplicationAudioMode
@@ -959,6 +999,7 @@ private final class MemoryAudioSession: ApplicationAudioSession {
     var isReleased = true
     var gain: Float = 1
     var muted = false
+    var effect: AppAudioEffectSettings?
     var failStop = false
     var startFailure: () -> Error? = { nil }
     var healthFailure: () -> Error? = { nil }
@@ -969,6 +1010,7 @@ private final class MemoryAudioSession: ApplicationAudioSession {
     }
     func setGain(_ value: Float) throws { gain = value }
     func setMuted(_ value: Bool) { muted = value }
+    func setEffect(_ settings: AppAudioEffectSettings?) { effect = settings }
     func start() throws {
         if let error = startFailure() { throw error }
         isActive = true; isReleased = false

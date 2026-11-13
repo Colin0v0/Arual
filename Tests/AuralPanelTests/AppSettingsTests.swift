@@ -17,6 +17,7 @@ struct AppSettingsTests {
 
         #expect(!settings.showHeadphoneControls)
         #expect(!settings.showSimultaneousOutput)
+        #expect(!settings.appAudioEffectsEnabled)
         #expect(settings.menuBarBatterySource == .off)
     }
 
@@ -31,6 +32,7 @@ struct AppSettingsTests {
         settings.appearance = .dark
         settings.showHeadphoneControls = false
         settings.showSimultaneousOutput = false
+        settings.appAudioEffectsEnabled = true
         settings.menuBarBatterySource = .pinned(deviceUID: "Bluetooth:AA-BB-CC-DD-EE-01")
 
         let restored = AppSettings(defaults: defaults)
@@ -38,6 +40,7 @@ struct AppSettingsTests {
         #expect(restored.appearance == .dark)
         #expect(!restored.showHeadphoneControls)
         #expect(!restored.showSimultaneousOutput)
+        #expect(restored.appAudioEffectsEnabled)
         #expect(restored.menuBarBatterySource == .pinned(deviceUID: "Bluetooth:AA-BB-CC-DD-EE-01"))
     }
 
@@ -80,6 +83,21 @@ struct AppSettingsTests {
         #expect(L10n.text("没有这个键", language: .chinese) == "没有这个键")
         #expect(L10n.text("全部输出（默认）", language: .english) == "All Outputs (Default)")
         #expect(L10n.text("已应用自定义路由", language: .english) == "Custom route applied")
+        #expect(L10n.text("启用应用音效", language: .english) == "Enable App Effects")
+        #expect(L10n.text("低音增强", language: .english) == "Bass Boost")
+        #expect(L10n.text("自动防削波", language: .english) == "Automatic clipping protection")
+        #expect(L10n.text("语音增强", language: .english) == "Voice Boost")
+        #expect(L10n.text("播客", language: .english) == "Podcast")
+        #expect(L10n.text("我的预设", language: .english) == "My Presets")
+        #expect(L10n.text("自定义", language: .english) == "Custom")
+        #expect(L10n.text("重命名", language: .english) == "Rename")
+        #expect(L10n.text("删除", language: .english) == "Delete")
+        #expect(L10n.text("另存为预设", language: .english) == "Save as Preset")
+        #expect(L10n.text("保存当前配置", language: .english) == "Save current configuration")
+        #expect(L10n.text("对比原声", language: .english) == "Compare Original")
+        #expect(L10n.text("频响曲线预览；使用下方推子调整",
+                          language: .english)
+                == "Response curve preview; use the faders below to adjust")
     }
 
     @Test func appAudioRoutesPersistAcrossStoreInstances() throws {
@@ -108,10 +126,78 @@ struct AppSettingsTests {
         }
     }
 
+    @Test func appAudioEffectsPersistAcrossStoreInstances() throws {
+        let suite = "Aural.AppAudioEffectStoreTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var settings = AppAudioEffectSettings(enabled: true)
+        settings.setGain(4, at: 4)
+        let values = ["bundle:test.browser": settings]
+        try AppAudioEffectStore(defaults: defaults).save(values)
+        let restored = try AppAudioEffectStore(defaults: defaults).load()
+        #expect(restored == values)
+    }
+
+    @Test func damagedAppAudioEffectDataReportsAnExplicitReadError() throws {
+        let suite = "Aural.AppAudioEffectStoreDamageTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(Data("{".utf8), forKey: "local.aural.settings.appAudioEffects")
+        #expect(throws: AppAudioEffectStoreError.self) {
+            try AppAudioEffectStore(defaults: defaults).load()
+        }
+    }
+
+    @Test func legacyThreeBandEffectDataMigratesToTenBands() throws {
+        let suite = "Aural.AppAudioEffectLegacyMigrationTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let legacy = #"{"bundle:com.apple.Music":{"enabled":false,"highGainDB":0,"lowGainDB":0,"midGainDB":0,"preset":"flat"}}"#.data(using: .utf8)!
+        defaults.set(legacy, forKey: "local.aural.settings.appAudioEffects")
+
+        let store = AppAudioEffectStore(defaults: defaults)
+        let settings = try store.load()
+        let restored = try #require(settings["bundle:com.apple.Music"])
+        #expect(restored.preset == .builtIn(.flat))
+        #expect(restored.eq == .flat)
+        #expect(!restored.enabled)
+
+        // 读回时已经写回新格式；第二次读取不再经过旧字段解析。
+        let rewritten = try #require(defaults.data(forKey: "local.aural.settings.appAudioEffects"))
+        let decoded = try JSONSerialization.jsonObject(with: rewritten) as? [String: [String: Any]]
+        #expect(decoded?["bundle:com.apple.Music"]?["gainsDB"] == nil)
+        #expect(decoded?["bundle:com.apple.Music"]?["eq"] != nil)
+        #expect(try AppAudioEffectStore(defaults: defaults).load() == settings)
+    }
+
+    @Test func legacyCustomEffectDataKeepsToneIntentAndBecomesManual() throws {
+        let suite = "Aural.AppAudioEffectLegacyCustomTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let legacy = #"{"bundle:com.google.Chrome":{"enabled":true,"highGainDB":-1,"lowGainDB":4,"midGainDB":2,"preset":"custom"}}"#.data(using: .utf8)!
+        defaults.set(legacy, forKey: "local.aural.settings.appAudioEffects")
+
+        let restored = try AppAudioEffectStore(defaults: defaults).load()["bundle:com.google.Chrome"]
+        let settings = try #require(restored)
+        #expect(settings.enabled)
+        #expect(settings.preset == .manual)
+        #expect(settings.eq[0] == 4)
+        #expect(settings.eq[9] == -1)
+        #expect(settings.preampDB == -4)
+    }
+
     @Test func settingsWindowUsesTheDeclaredFixedSize() {
         let size = SettingsMetrics.size
         #expect(size.width == 500)
-        #expect(size.height == 470)
+        #expect(size.height == 520)
     }
 
     @Test func englishSettingDescriptionsFitOneLine() {
@@ -122,6 +208,7 @@ struct AppSettingsTests {
             "登录 Mac 后自动运行 Aural。",
             "关闭后，耳机控制从主面板隐藏。",
             "关闭后，多设备输出功能从输出面板隐藏。",
+            "为每个应用提供 10 段均衡器和预设。",
             "固定设备断开后隐藏。"
         ]
         for key in keys {
